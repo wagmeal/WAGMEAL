@@ -15,6 +15,8 @@ struct UserProfileView: View {
     @State private var gender: String = ""
     @State private var isSaving = false
     @State private var saveMessage: String?
+    @State private var showDeleteAccountConfirm = false
+    @State private var isDeletingAccount = false
 
     private var formattedBirthday: String {
         let formatter = DateFormatter()
@@ -33,6 +35,8 @@ struct UserProfileView: View {
                         Spacer()
                         Text(email.isEmpty ? "未設定" : email)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
 
                     HStack {
@@ -47,12 +51,14 @@ struct UserProfileView: View {
                     } label: {
                         HStack {
                             Spacer()
-                            Text("ログイン情報を変更する")
+                            Text("ログイン情報を変更")
                             Spacer()
                         }
                     }
                 } header: {
                     Text("ログイン情報")
+                } footer: {
+                    Text("メールアドレスを変更する場合は確認メールを送信し、リンクを開いた後に変更が確定します。")
                 }
                 // MARK: - プロフィール
                 Section {
@@ -95,6 +101,43 @@ struct UserProfileView: View {
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }
+                }
+
+                // MARK: - アカウント削除
+                Section {
+                    Button {
+                        showDeleteAccountConfirm = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text(isDeletingAccount ? "削除中..." : "アカウントを削除")
+                                .foregroundColor(.red)
+                            Spacer()
+                        }
+                    }
+                    .disabled(isDeletingAccount)
+                    .confirmationDialog(
+                        "アカウントを削除しますか？\nこの操作は取り消せません。",
+                        isPresented: $showDeleteAccountConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("アカウントを削除", role: .destructive) {
+                            Task {
+                                isDeletingAccount = true
+                                defer { isDeletingAccount = false }
+                                do {
+                                    try await authViewModel.deleteAccount()
+                                } catch {
+                                    saveMessage = "アカウント削除に失敗しました：\(error.localizedDescription)"
+                                }
+                            }
+                        }
+                        Button("キャンセル", role: .cancel) { }
+                    }
+                } header: {
+                    Text("アカウント")
+                } footer: {
+                    Text("アカウントと保存されたデータを完全に削除します。")
                 }
             }
             .navigationTitle("ユーザー情報")

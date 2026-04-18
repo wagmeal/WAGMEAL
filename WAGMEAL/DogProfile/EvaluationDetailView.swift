@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseFirestore
+import FirebaseAnalytics
 
 private enum FeedingBarColor: String, CaseIterable, Identifiable {
     case beige
@@ -43,8 +44,16 @@ struct EvaluationDetailView: View {
     @Binding var isPresented: Bool
     @StateObject private var keyboard = KeyboardObserver()
 
+    @EnvironmentObject var foodVM: DogFoodViewModel
+    @EnvironmentObject var dogVM: DogProfileViewModel
+
+    @Namespace private var namespace
+    @State private var selectedDogFoodForDetail: DogFood? = nil
+    @State private var showDogFoodDetail: Bool = false
+
 
     @State private var feedingStart: Date = Date()
+    @State private var hasFeedingStartDate: Bool = true
     @State private var feedingEnd: Date?
     @State private var hasEndDate: Bool = false
     @State private var isSavingFeedingPeriod: Bool = false
@@ -56,6 +65,12 @@ struct EvaluationDetailView: View {
     
     @State private var showDeleteConfirm: Bool = false
     @State private var isDeleting: Bool = false
+
+    @State private var eatingRating: Int = 0            // 食いつき
+    @State private var conditionRating: Int = 0         // 体調
+    @State private var costPerformanceRating: Int = 0   // コスパ
+    @State private var storageEaseRating: Int = 0       // 保存のしやすさ
+    @State private var repurchaseRating: Int = 0        // また買いたい
 
     // MARK: - アレルギー情報（DogFoodDetailView と同等のラベル生成）
     private var allergyItems: [String] {
@@ -72,6 +87,27 @@ struct EvaluationDetailView: View {
         if food.hasCorn ?? false { items.append("トウモロコシ") }
         if food.hasSoy ?? false { items.append("大豆") }
         return items
+    }
+
+    // MARK: - 犬の誕生日 / 年齢表示
+    private var dogBirthDate: Date? {
+        // DogProfileViewModel の dogs から評価対象の犬を特定
+        dogVM.dogs.first(where: { ($0.id ?? "") == item.evaluation.dogID })?.birthDate
+    }
+
+    private func ageText(at date: Date) -> String {
+        guard let birth = dogBirthDate else { return "年齢不明" }
+        let cal = Calendar(identifier: .gregorian)
+        let comps = cal.dateComponents([.year, .month], from: birth, to: date)
+        let y = max(0, comps.year ?? 0)
+        let m = max(0, comps.month ?? 0)
+        if y <= 0 {
+            return "\(m)ヶ月"
+        }
+        if m <= 0 {
+            return "\(y)歳"
+        }
+        return "\(y)歳\(m)ヶ月"
     }
 
     var body: some View {
@@ -93,6 +129,11 @@ struct EvaluationDetailView: View {
             .padding(.bottom, keyboard.height)
 
             Button {
+                Analytics.logEvent("evaluation_detail_close", parameters: [
+                    "evaluation_id": item.evaluation.id ?? "",
+                    "food_id": item.dogFood.id ?? "",
+                    "dog_id": item.evaluation.dogID
+                ])
                 hideKeyboard()
                 withAnimation(.spring()) {
                     isPresented = false
@@ -106,17 +147,68 @@ struct EvaluationDetailView: View {
             }
             .padding(.leading, 8)
             .padding(.top, 8)
+
+            // ✅ ドッグフード詳細画面（RankingViewと同じくZStackで上に重ねる）
+            if let dogFood = selectedDogFoodForDetail, showDogFoodDetail {
+                DogFoodDetailView(
+                    dogFood: dogFood,
+                    dogs: dogVM.dogs,
+                    namespace: namespace,
+                    matchedID: dogFood.id ?? UUID().uuidString,
+                    isPresented: $showDogFoodDetail
+                )
+                .environmentObject(foodVM)
+                .zIndex(1)
+                .transition(.move(edge: .trailing))
+                .gesture(
+                    DragGesture()
+                        .onEnded { value in
+                            if value.translation.width > 100 {
+                                withAnimation {
+                                    showDogFoodDetail = false
+                                    selectedDogFoodForDetail = nil
+                                }
+                            }
+                        }
+                )
+            }
         }
         .edgesIgnoringSafeArea(.top)
         .onAppear {
+            Analytics.logEvent(AnalyticsEventScreenView, parameters: [
+                AnalyticsParameterScreenName: "evaluation_detail",
+                AnalyticsParameterScreenClass: "EvaluationDetailView"
+            ])
+            Analytics.logEvent("evaluation_detail_view", parameters: [
+                "evaluation_id": item.evaluation.id ?? "",
+                "food_id": item.dogFood.id ?? "",
+                "dog_id": item.evaluation.dogID,
+                "from_screen": "dog_detail"
+            ])
             let ev = item.evaluation
-            feedingStart = ev.feedingStartDate ?? ev.timestamp
+
+            // 食べ始めた日（記録の有無を管理）
+            if let start = ev.feedingStartDate {
+                feedingStart = start
+                hasFeedingStartDate = true
+            } else {
+                feedingStart = ev.timestamp
+                hasFeedingStartDate = false
+            }
+
+            // 食べ終えた日（記録の有無を管理）
             feedingEnd = ev.feedingEndDate
             hasEndDate = feedingEnd != nil
 
             // コメント＆公開設定の初期値
             editableComment = ev.comment ?? ""
             isReviewPublic = ev.isReviewPublic ?? true
+
+            eatingRating = ev.eating
+            conditionRating = ev.condition
+            costPerformanceRating = ev.costPerformance
+            storageEaseRating = ev.storageEase
+            repurchaseRating = ev.repurchase
 
             if let key = ev.barColorKey, let c = FeedingBarColor(rawValue: key) {
                 selectedBarColor = c
@@ -146,48 +238,26 @@ struct EvaluationDetailView: View {
         } message: {
             Text("一度削除すると元に戻せません。")
         }
+        // (DogFoodDetailView sheet presentation removed; navigation handled via Search tab)
     }
     
 
-    // MARK: - Small header image (AsyncImage, URL from imagePath)
+    // MARK: - Small header image（優先順位：Storage -> Database(URL) -> imagefail2）
     private func smallHeaderImage() -> some View {
-        ZStack {
-            if let url = URL(string: item.dogFood.imagePath) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        if let local = UIImage(named: item.dogFood.imagePath) {
-                            Image(uiImage: local)
-                                .resizable()
-                                .scaledToFill()
-                        } else {
-                            Image("imagefail2")
-                                .resizable()
-                                .scaledToFill()
-                        }
-                    @unknown default:
-                        Image("imagefail2")
-                            .resizable()
-                            .scaledToFill()
-                    }
-                }
-            } else {
-                if let local = UIImage(named: item.dogFood.imagePath) {
-                    Image(uiImage: local)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Image("imagefail2")
-                        .resizable()
-                        .scaledToFill()
-                }
-            }
+        ResolvedDogFoodImageView(
+            storagePath: item.dogFood.storagePath,
+            imagePath: item.dogFood.imagePath,
+            taskID: item.dogFood.id ?? item.dogFood.imagePath
+        ) { image in
+            image
+                .resizable()
+                .scaledToFill()
+        } placeholder: {
+            ProgressView()
+        } fallback: {
+            Image("imagefail2")
+                .resizable()
+                .scaledToFill()
         }
         .frame(width: 72, height: 72)
         .clipShape(Circle())
@@ -201,20 +271,60 @@ struct EvaluationDetailView: View {
                 HStack(alignment: .center, spacing: 12) {
                     smallHeaderImage()
                     
-                    VStack(alignment: .leading, spacing: 8) {
-                        // タイトル
-                        Text(item.dogFood.name)
-                            .font(.title)
-                            .bold()
-                        
-                        // 評価日
-                        HStack(spacing: 8) {
-                            Image(systemName: "calendar")
-                            Text(dateStringJP(item.evaluation.timestamp))
+                    HStack(alignment: .center, spacing: 1) {
+                        // ドッグフード名 + 日付をひとまとめ
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(item.dogFood.name)
+                                .font(.title)
+                                .bold()
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            // 評価日
+                            HStack(spacing: 8) {
+                                Image(systemName: "calendar")
+                                Text(dateStringJP(item.evaluation.timestamp))
+                            }
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
                         }
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+
+                        // 右端：詳細ボタン
+                        Button {
+                            Analytics.logEvent("evaluation_detail_open_food", parameters: [
+                                "evaluation_id": item.evaluation.id ?? "",
+                                "food_id": item.dogFood.id ?? ""
+                            ])
+
+                            hideKeyboard()
+                            withAnimation(.spring()) {
+                                selectedDogFoodForDetail = item.dogFood
+                                showDogFoodDetail = true
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("詳細")
+                                Image(systemName: "chevron.right")
+                                    .imageScale(.small)
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(.systemGray6))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color(.systemGray3))
+                            )
+                            .foregroundColor(FeedingBarColor.beige.color)
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 10))
+                        .buttonStyle(.plain)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 
                 if !allergyItems.isEmpty {
@@ -226,13 +336,55 @@ struct EvaluationDetailView: View {
                         }
                     }
                 }
+                
+                if let brand = item.dogFood.brand, !brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "tag")
+                        Text(brand)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .font(.subheadline)
+                    //.foregroundColor(.blue)
+                }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                // みんなの評価表示の代わりに「今回の評価」を3行表示
-                RatingRow(title: "総合評価",           value: Double(item.evaluation.overall),           starSize: 18)
-                RatingRow(title: "わんちゃんの満足度", value: Double(item.evaluation.dogSatisfaction),   starSize: 18)
-                RatingRow(title: "飼い主の満足度",     value: Double(item.evaluation.ownerSatisfaction), starSize: 18)
+            VStack(alignment: .leading, spacing: 12) {
+                // 「また買いたい」を最初に表示
+                VStack(alignment: .leading, spacing: 2) {
+                    EditableRatingRow(title: "また買いたい", rating: $repurchaseRating)
+                    Text("総合的に見てまた買いたいか")
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    EditableRatingRow(title: "食いつき", rating: $eatingRating)
+                    Text("食べるスピード・残しやすさ")
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    EditableRatingRow(title: "体調", rating: $conditionRating)
+                    Text("便・皮膚・涙やけ・元気さなど")
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    EditableRatingRow(title: "コスパ", rating: $costPerformanceRating)
+                    Text("価格に対する満足度")
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    EditableRatingRow(title: "保存のしやすさ", rating: $storageEaseRating)
+                    Text("袋・保管のしやすさなど")
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                }
             }
             feedingPeriodSection()
 
@@ -273,35 +425,83 @@ struct EvaluationDetailView: View {
         }
     }
     
-    // MARK: - Feeding period edit section
+    // MARK: - Feeding period edit section（EvaluationInputView と同じ構成）
     private func feedingPeriodSection() -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("\(item.evaluation.dogName) が食べた期間")
                 .font(.headline)
             
             VStack(alignment: .leading, spacing: 8) {
-                // 開始日
-                DatePicker("食べ始めた日", selection: $feedingStart, displayedComponents: .date)
-                    .environment(\.locale, Locale(identifier: "ja_JP"))
-
-                
-                // 終了日の有無
-                Toggle("食べ終えた日を設定する", isOn: $hasEndDate.animation())
-                    .tint(FeedingBarColor.beige.color)
-                
-                if hasEndDate {
-                    DatePicker(
-                        "食べ終えた日",
-                        selection: Binding(
-                            get: { feedingEnd ?? feedingStart },
-                            set: { feedingEnd = $0 }
-                        ),
-                        in: feedingStart...,
-                        displayedComponents: .date
-                    )
-                    .environment(\.locale, Locale(identifier: "ja_JP"))
+                // 食べ始めた日：ラベル＋記録有無のトグル
+                HStack {
+                    Text("食べ始めた日")
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Text(hasFeedingStartDate ? "記録する" : "記録しない")
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                        Toggle("", isOn: $hasFeedingStartDate)
+                            .labelsHidden()
+                            .tint(FeedingBarColor.beige.color)
+                            .scaleEffect(0.8, anchor: .center)
+                    }
                 }
-                
+
+                // 食べ始めた日ピッカー（記録する場合のみ表示）
+                if hasFeedingStartDate {
+                    HStack {
+                        Text("その時の年齢：\(ageText(at: feedingStart))")
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                        Spacer()
+                        DatePicker(
+                            "",
+                            selection: $feedingStart,
+                            displayedComponents: .date
+                        )
+                        .labelsHidden()
+                        .environment(\.locale, Locale(identifier: "ja_JP"))
+                    }
+                }
+
+                // 食べ終えた日：ラベル＋記録有無のトグル
+                HStack {
+                    Text("食べ終えた日")
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Text(hasEndDate ? "記録する" : "記録しない")
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                        Toggle("", isOn: $hasEndDate)
+                            .labelsHidden()
+                            .tint(FeedingBarColor.beige.color)
+                            .scaleEffect(0.8, anchor: .center)
+                    }
+                }
+
+                // 食べ終えた日ピッカー（記録する場合のみ表示）
+                if hasEndDate {
+                    let endBinding = Binding(
+                        get: { feedingEnd ?? feedingStart },
+                        set: { feedingEnd = $0 }
+                    )
+                    HStack {
+                        Text("その時の年齢：\(ageText(at: endBinding.wrappedValue))")
+                            .font(.footnote)
+                            .foregroundColor(.gray)
+                        Spacer()
+                        DatePicker(
+                            "",
+                            selection: endBinding,
+                            in: feedingStart...,
+                            displayedComponents: .date
+                        )
+                        .labelsHidden()
+                        .environment(\.locale, Locale(identifier: "ja_JP"))
+                    }
+                }
+
+                // エラー表示
                 if let error = feedingPeriodError {
                     Text(error)
                         .font(.footnote)
@@ -311,7 +511,10 @@ struct EvaluationDetailView: View {
             .font(.subheadline)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color(.systemGray6)))
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color(.systemGray6))
+            )
         }
     }
     
@@ -321,20 +524,55 @@ struct EvaluationDetailView: View {
             return
         }
         feedingPeriodError = nil
+        Analytics.logEvent("evaluation_update_attempt", parameters: [
+            "evaluation_id": evalId,
+            "food_id": item.dogFood.id ?? "",
+            "dog_id": item.evaluation.dogID,
+            "eating": eatingRating,
+            "condition": conditionRating,
+            "cost_performance": costPerformanceRating,
+            "storage_ease": storageEaseRating,
+            "repurchase": repurchaseRating,
+            "comment_filled": !editableComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "has_feeding_start": hasFeedingStartDate,
+            "has_feeding_end": hasEndDate,
+            "is_review_public": isReviewPublic,
+            "bar_color": selectedBarColor.rawValue
+        ])
         isSavingFeedingPeriod = true
         
         let db = Firestore.firestore()
         var data: [String: Any] = [
-            "feedingStartDate": Timestamp(date: feedingStart),
             "barColorKey": selectedBarColor.rawValue,
             "comment": editableComment,
-            "isReviewPublic": isReviewPublic
+            "isReviewPublic": isReviewPublic,
+            "eating": eatingRating,
+            "condition": conditionRating,
+            "costPerformance": costPerformanceRating,
+            "storageEase": storageEaseRating,
+            "repurchase": repurchaseRating,
+            "ratings": [
+                "eating": eatingRating,
+                "condition": conditionRating,
+                "costPerformance": costPerformanceRating,
+                "storageEase": storageEaseRating,
+                "repurchase": repurchaseRating
+            ]
         ]
-        
+
+        // 食べ始めた日
+        if hasFeedingStartDate {
+            data["feedingStartDate"] = Timestamp(date: feedingStart)
+        } else {
+            // 記録しない場合はフィールドをクリア
+            data["feedingStartDate"] = NSNull()
+        }
+
+        // 食べ終えた日
         if hasEndDate, let end = feedingEnd {
             data["feedingEndDate"] = Timestamp(date: end)
         } else {
-            // 終了日をクリアする場合は null を保存
+            // 記録しない場合やトグルOFFの場合はフィールドをクリア
             data["feedingEndDate"] = NSNull()
         }
         
@@ -345,6 +583,21 @@ struct EvaluationDetailView: View {
                     feedingPeriodError = "期間の保存に失敗しました: \(error.localizedDescription)"
                 } else {
                     feedingPeriodError = nil
+                    Analytics.logEvent("evaluation_update", parameters: [
+                        "evaluation_id": evalId,
+                        "food_id": item.dogFood.id ?? "",
+                        "dog_id": item.evaluation.dogID,
+                        "eating": eatingRating,
+                        "condition": conditionRating,
+                        "cost_performance": costPerformanceRating,
+                        "storage_ease": storageEaseRating,
+                        "repurchase": repurchaseRating,
+                        "comment_filled": !editableComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        "has_feeding_start": hasFeedingStartDate,
+                        "has_feeding_end": hasEndDate,
+                        "is_review_public": isReviewPublic,
+                        "bar_color": selectedBarColor.rawValue
+                    ])
                     // 保存成功時は閉じて DogDetailView に戻る
                     withAnimation(.easeInOut) {
                         isPresented = false
@@ -360,6 +613,11 @@ struct EvaluationDetailView: View {
             return
         }
         feedingPeriodError = nil
+        Analytics.logEvent("evaluation_delete_attempt", parameters: [
+            "evaluation_id": evalId,
+            "food_id": item.dogFood.id ?? "",
+            "dog_id": item.evaluation.dogID
+        ])
         isDeleting = true
 
         let db = Firestore.firestore()
@@ -369,6 +627,11 @@ struct EvaluationDetailView: View {
                 if let error = error {
                     feedingPeriodError = "削除に失敗しました: \(error.localizedDescription)"
                 } else {
+                    Analytics.logEvent("evaluation_delete", parameters: [
+                        "evaluation_id": evalId,
+                        "food_id": item.dogFood.id ?? "",
+                        "dog_id": item.evaluation.dogID
+                    ])
                     // 削除成功時は画面を閉じる
                     withAnimation(.easeInOut) {
                         isPresented = false
@@ -457,6 +720,16 @@ struct EvaluationDetailView: View {
         f.dateFormat = "yyyy年M月d日（E）"
         return f.string(from: date)
     }
+
+    // MARK: - Keyboard
+    private func hideKeyboard() {
+        #if canImport(UIKit)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil,
+                                        from: nil,
+                                        for: nil)
+        #endif
+    }
 }
 
  #if canImport(UIKit)
@@ -514,103 +787,37 @@ private struct AllergyTagView: View {
     }
 }
 
-// MARK: - DogFoodDetailView と同等の星UI（StarRatingView / RatingRow）
-private struct EvalStarRatingView: View {
-    let rating: Double          // 0.0〜5.0
-    var size: CGFloat = 18
-    var spacing: CGFloat = 4
-    private let maxStars = 5
-    var fillFromRight: Bool = false
-
-    private var clampedRating: Double { max(0, min(rating, Double(maxStars))) }
-    private var totalWidth: CGFloat { size * CGFloat(maxStars) + spacing * CGFloat(maxStars - 1) }
-    private var fillWidth: CGFloat {
-        let full = floor(clampedRating)
-        let partial = clampedRating - full
-        let fullWidth = CGFloat(full) * (size + spacing)
-        let partialWidth = CGFloat(partial) * size
-        return fullWidth + partialWidth
-    }
-
-    var body: some View {
-        ZStack {
-            HStack(spacing: spacing) {
-                ForEach(0..<maxStars, id: \.self) { _ in
-                    Image(systemName: "star.fill")
-                        .resizable().scaledToFit()
-                        .frame(width: size, height: size)
-                }
-            }
-            .foregroundStyle(.white)
-
-            HStack(spacing: spacing) {
-                ForEach(0..<maxStars, id: \.self) { _ in
-                    Image(systemName: "star.fill")
-                        .resizable().scaledToFit()
-                        .frame(width: size, height: size)
-                }
-            }
-            .foregroundStyle(.yellow)
-            .frame(width: totalWidth, alignment: .leading)
-            .mask(
-                HStack(spacing: 0) {
-                    if fillFromRight {
-                        Spacer(minLength: 0)
-                        Rectangle().frame(width: fillWidth)
-                    } else {
-                        Rectangle().frame(width: fillWidth)
-                        Spacer(minLength: 0)
-                    }
-                }
-                .frame(width: totalWidth)
-            )
-
-            HStack(spacing: spacing) {
-                ForEach(0..<maxStars, id: \.self) { _ in
-                    Image(systemName: "star")
-                        .resizable().scaledToFit()
-                        .frame(width: size, height: size)
-                }
-            }
-            .foregroundStyle(.yellow)
-        }
-        .frame(width: totalWidth, height: size)
-    }
-}
-
-private struct RatingRow: View {
-    let title: String?
-    let value: Double?
-    var starSize: CGFloat = 18
-    var numberWidth: CGFloat = 38
-
-    private var formatted: String {
-        guard let v = value else { return "" }
-        return String(format: "%.1f", v)
-    }
-
+// MARK: - 編集可能な星評価行
+private struct EditableRatingRow: View {
+    let title: String
+    @Binding var rating: Int
+    var starSize: CGFloat = 22
+    
     var body: some View {
         HStack(spacing: 12) {
-            Text(title ?? "")
-                .font(.subheadline)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            Text(title)
+                .font(.headline)
+                .fontWeight(.semibold)
             Spacer(minLength: 8)
-            HStack(spacing: 8) {
-                Text(formatted)
-                    .font(.headline)
-                    .monospacedDigit()
-                    .frame(width: numberWidth, alignment: .trailing)
-                EvalStarRatingView(rating: value ?? 0, size: starSize)
+            HStack(spacing: 14) {
+                ForEach(1...5, id: \.self) { index in
+                    Image(systemName: index <= rating ? "star.fill" : "star")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: starSize, height: starSize)
+                        .foregroundColor(.yellow)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            rating = index
+                        }
+                }
             }
-            .fixedSize()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title ?? "平均評価")
-        .accessibilityValue(formatted)
     }
 }
+
 
 private struct EvaluationDetailPreviewWrapper: View {
     @State private var isPresented = true
@@ -621,27 +828,22 @@ private struct EvaluationDetailPreviewWrapper: View {
     }
 }
 
+
 #Preview("EvaluationDetail – Mock") {
-    // MocData からモックのドッグフード＆犬を取得
-    let mockFood = PreviewMockData.dogFood[1]   // Hill's / プレミアムドッグ
-    let mockDog  = PreviewMockData.dogs[0]      // ココ など
+    // MocData から既存の評価を1件取得
+    let mock = PreviewMockData.evaluations.first!
 
-    // Evaluation は今までと同じパラメータでOK（必要な形に調整してもOK）
-    let mockEval = Evaluation(
-        id: "eval_preview",
-        dogID: mockDog.id ?? "dog_preview",   // ← ここを修正
-        dogName: mockDog.name,
-        breed: mockDog.breed,
-        dogFoodId: mockFood.id ?? "",
-        userId: "user_001",
-        overall: 4,
-        dogSatisfaction: 5,
-        ownerSatisfaction: 3,
-        comment: "よく食べた。毛艶も良い感じ。",
-        timestamp: Date(),
-        ratings: [:]
-    )
+    // 対応する DogFood を取得
+    let mockFood = PreviewMockData.dogFood.first { $0.id == mock.dogFoodId }!
 
-    let item = EvaluationWithFood(evaluation: mockEval, dogFood: mockFood)
+    // MockEvaluation → Evaluation へ変換
+    let eval = Evaluation(fromMock: mock)
+
+    let item = EvaluationWithFood(evaluation: eval, dogFood: mockFood)
+
     EvaluationDetailPreviewWrapper(item: item)
+        .environmentObject(DogFoodViewModel(mockData: true))
+        .environmentObject(DogProfileViewModel())
+        .environmentObject(MainTabRouter())
 }
+

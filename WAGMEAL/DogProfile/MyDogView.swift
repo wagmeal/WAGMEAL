@@ -1,14 +1,37 @@
 import SwiftUI
+import FirebaseAnalytics
 
 struct MyDogView: View {
     @Binding var selectedDogID: String?
     @ObservedObject var dogVM: DogProfileViewModel
     @EnvironmentObject var authVM: AuthViewModel
+    @EnvironmentObject var foodVM: DogFoodViewModel
+    @StateObject private var evalVM: EvaluationViewModel
 
     @State private var isShowingDogManagement = false
+    @State private var showLoginSheet = false
     @State private var selectedDogForDetail: DogProfile? = nil
     @State private var showDetail = false
     @State private var dogToDelete: DogProfile? = nil
+
+    // 「いまのごはん」行タップ → 評価詳細へ
+    @State private var selectedCurrentFood: DogFood? = nil
+    @State private var selectedCurrentEvaluation: Evaluation? = nil
+    @State private var showCurrentEvaluationDetail = false
+
+    init(
+        selectedDogID: Binding<String?>,
+        dogVM: DogProfileViewModel,
+        evalVM: EvaluationViewModel = EvaluationViewModel()
+    ) {
+        self._selectedDogID = selectedDogID
+        self.dogVM = dogVM
+        self._evalVM = StateObject(wrappedValue: evalVM)
+    }
+
+    private var isPreview: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
 
     private var visibleDogs: [DogProfile] {
         dogVM.dogs.filter { $0.isDeleted != true }
@@ -17,12 +40,36 @@ struct MyDogView: View {
     // 単一のわんちゃんカード行を切り出してコンパイル負荷を下げる
     @ViewBuilder
     private func dogRow(for dog: DogProfile) -> some View {
-        DogCard(dog: dog) {
-            withAnimation(.spring()) {
-                selectedDogForDetail = dog
-                showDetail = true
+        let foods = currentDogFoods(for: dog)
+
+        DogCard(
+            dog: dog,
+            currentDogFoods: foods,
+            onShowDetail: {
+                if !isPreview {
+                    Analytics.logEvent("dog_view", parameters: [
+                        "dog_id": dog.id ?? "",
+                        "from_screen": "my_dog"
+                    ])
+                }
+                withAnimation(.spring()) {
+                    selectedDogForDetail = dog
+                    showDetail = true
+                }
+            },
+            onTapCurrentFood: { food in
+                // dogID + foodID から「いまのごはん」の最新評価を取得
+                let eval = evalVM.currentFeedingLatestEvaluation(for: dog.id, dogFoodId: food.id)
+                selectedCurrentFood = food
+                selectedCurrentEvaluation = eval
+                // eval が取れたときだけ遷移
+                if eval != nil {
+                    withAnimation(.spring()) {
+                        showCurrentEvaluationDetail = true
+                    }
+                }
             }
-        }
+        )
         .environmentObject(dogVM)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
@@ -31,6 +78,24 @@ struct MyDogView: View {
                 Label("削除", systemImage: "trash")
             }
         }
+    }
+    
+    private func currentDogFoods(for dog: DogProfile) -> [DogFood] {
+        guard let dogID = dog.id else { return [] }
+
+        // EvaluationViewModel側で集計済みの「いまのごはん」IDを参照
+        let ids = evalVM.currentFeedingFoodIDs(for: dogID)
+        guard !ids.isEmpty else { return [] }
+
+            
+        let foodsByID: [String: DogFood] = Dictionary(
+            uniqueKeysWithValues: foodVM.dogFoods.compactMap { f in
+                guard let id = f.id else { return nil }
+                return (id, f)
+            }
+        )
+
+        return ids.compactMap { foodsByID[$0] }
     }
 
     var body: some View {
@@ -41,11 +106,22 @@ struct MyDogView: View {
                     // 🐶 登録済みのわんちゃん一覧
                     ForEach(visibleDogs, id: \.id) { dog in
                         dogRow(for: dog)
+                            .id("\(dog.id ?? "")_\(dog.imagePath ?? "no-image")")
                     }
                     Button {
-                        isShowingDogManagement = true
+                        if !isPreview {
+                            Analytics.logEvent("dog_add_start", parameters: [
+                                "from_screen": "my_dog"
+                            ])
+                        }
+                        if authVM.isLoggedIn {
+                            isShowingDogManagement = true
+                        } else {
+                            showLoginSheet = true
+                        }
                     } label: {
-                        Text("MyDog追加")
+                        Text(authVM.isLoggedIn ? "MyDog追加" : "ログインして\nMyDog追加")
+                            .multilineTextAlignment(.center)
                             .font(.body)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.vertical, 14)
@@ -63,7 +139,25 @@ struct MyDogView: View {
                 }
                 .listStyle(.plain)
                 .listRowSeparator(.hidden)
-                .onAppear { dogVM.fetchDogs() }
+                .refreshable {
+                    if !isPreview {
+                        Analytics.logEvent("mydog_refresh", parameters: nil)
+                        dogVM.fetchDogs()
+                    }
+                    // Preview(モック)でも「いまのごはん」は更新したい
+                    evalVM.listenCurrentFeedingFoodsForLoggedInUser()
+                }
+                .onAppear {
+                    if !isPreview {
+                        Analytics.logEvent(AnalyticsEventScreenView, parameters: [
+                            AnalyticsParameterScreenName: "my_dog",
+                            AnalyticsParameterScreenClass: "MyDogView"
+                        ])
+                        dogVM.fetchDogs()
+                    }
+                    // Preview(モック)でも「いまのごはん」を集計して表示できるようにする
+                    evalVM.listenCurrentFeedingFoodsForLoggedInUser()
+                }
             }
             .offset(x: showDetail ? -40 : 0) // 詳細表示中は少し左に押し出す
             .animation(.spring(), value: showDetail)
@@ -107,10 +201,46 @@ struct MyDogView: View {
                 .zIndex(1)
                 .animation(.spring(), value: showDetail)
             }
+
+            // ===== 「いまのごはん」評価詳細（右からスライドイン）=====
+            if showCurrentEvaluationDetail,
+               let eval = selectedCurrentEvaluation,
+               let food = selectedCurrentFood {
+                ZStack {
+                    Color.white
+                        .ignoresSafeArea()
+
+                    let item = EvaluationWithFood(evaluation: eval, dogFood: food)
+                    EvaluationDetailView(item: item, isPresented: $showCurrentEvaluationDetail)
+                        .onDisappear {
+                            // 遷移が終わったタイミングで選択状態をクリア
+                            selectedCurrentFood = nil
+                            selectedCurrentEvaluation = nil
+                        }
+                        .gesture(
+                            DragGesture()
+                                .onEnded { value in
+                                    if value.translation.width > 100 {
+                                        withAnimation(.spring()) {
+                                            showCurrentEvaluationDetail = false
+                                        }
+                                    }
+                                }
+                        )
+                }
+                .zIndex(2)
+                .transition(.move(edge: .trailing))
+            }
         }
         // DogManagementは従来どおりシートでOK（NavigationStack不要）
         .sheet(isPresented: $isShowingDogManagement) {
             NewDogView(selectedDogID: $selectedDogID, dogVM: dogVM)
+        }
+        .sheet(isPresented: $showLoginSheet) {
+            LoginView()
+                .environmentObject(authVM)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .alert(
             "本当に削除しますか？",
@@ -127,12 +257,23 @@ struct MyDogView: View {
             }
             Button("削除", role: .destructive) {
                 if let dog = dogToDelete {
-                    dogVM.softDelete(dog: dog)
+                    if !isPreview {
+                        Analytics.logEvent("dog_profile_delete", parameters: [
+                            "dog_id": dog.id ?? "",
+                            "from_screen": "my_dog"
+                        ])
+                        dogVM.softDelete(dog: dog)
+                    }
                 }
                 dogToDelete = nil
             }
         } message: { _ in
             Text("評価データは残ります")
+        }
+        .onChange(of: authVM.isLoggedIn) { isLoggedIn in
+            if isLoggedIn {
+                showLoginSheet = false
+            }
         }
         .edgesIgnoringSafeArea(.bottom)
         .background(Color.white)
@@ -140,43 +281,50 @@ struct MyDogView: View {
 }
 
 // MARK: - Previews
-#Preview("MyDogView – Mock") {
+
+#Preview("MyDogView – Logged Out") {
     struct MyDogPreviewWrapper: View {
-        @State private var selectedDogID: String? = PreviewMockData.dogs.first?.id
+        @State private var selectedDogID: String? = nil
         var body: some View {
-            let mockDogVM = DogProfileViewModel(mockDogs: PreviewMockData.dogs)
+            // ログアウト状態は犬データも空にして、追加導線を確認しやすくする
+            let mockDogVM = DogProfileViewModel(mockDogs: [])
+
             let mockAuthVM = AuthViewModel()
-            mockAuthVM.isLoggedIn = true
-            mockAuthVM.username = "たくみ"
+            mockAuthVM.isLoggedIn = false
+            mockAuthVM.username = nil
 
             return MyDogView(
                 selectedDogID: $selectedDogID,
-                dogVM: mockDogVM
+                dogVM: mockDogVM,
+                evalVM: EvaluationViewModel(useMockData: true)
             )
             .environmentObject(mockAuthVM)
+            .environmentObject(DogFoodViewModel(mockData: true))
             .background(Color(.systemGroupedBackground))
         }
     }
     return MyDogPreviewWrapper()
 }
 
-#Preview("MyDogView – Dark") {
-    struct MyDogPreviewWrapperDark: View {
+#Preview("MyDogView – Logged In") {
+    struct MyDogPreviewWrapper: View {
         @State private var selectedDogID: String? = PreviewMockData.dogs.first?.id
         var body: some View {
             let mockDogVM = DogProfileViewModel(mockDogs: PreviewMockData.dogs)
+
             let mockAuthVM = AuthViewModel()
             mockAuthVM.isLoggedIn = true
             mockAuthVM.username = "たくみ"
 
             return MyDogView(
                 selectedDogID: $selectedDogID,
-                dogVM: mockDogVM
+                dogVM: mockDogVM,
+                evalVM: EvaluationViewModel(useMockData: true)
             )
             .environmentObject(mockAuthVM)
+            .environmentObject(DogFoodViewModel(mockData: true))
             .background(Color(.systemGroupedBackground))
-            .preferredColorScheme(.dark)
         }
     }
-    return MyDogPreviewWrapperDark()
+    return MyDogPreviewWrapper()
 }

@@ -1,15 +1,13 @@
 import SwiftUI
 
-struct EditProfileView: View {
-    @EnvironmentObject var authViewModel: AuthViewModel
-    @Environment(\.dismiss) private var dismiss
+struct ProfileSetupView: View {
+    @EnvironmentObject var authVM: AuthViewModel
 
-    @State private var username: String = ""
-    @State private var email: String = ""
-    @State private var birthday: Date? = Date()
-    @State private var birthdayEnabled: Bool = true
     @State private var genderEnabled: Bool = true
     @State private var gender: String = "男性"
+    @State private var birthday: Date? = Date()
+    @State private var birthdayEnabled: Bool = true
+    @State private var username: String = ""
     @State private var isSaving = false
     @State private var message: String?
 
@@ -60,55 +58,22 @@ struct EditProfileView: View {
                     }
                 }
             }
-            //.navigationTitle("プロフィールを編集")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        saveProfile()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text("保存")
-                        }
+            VStack {
+                Button(action: { saveProfile() }) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Text("保存")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color(red: 184/255, green: 164/255, blue: 144/255))
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
                     }
-                    .disabled(isSaving)
                 }
+                .padding()
             }
-            .onAppear {
-                loadFromAuth()
-            }
-        }
-    }
-
-    // MARK: - ロード
-
-    private func loadFromAuth() {
-        // プレビュー時は MocData を使用
-        if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
-            let mock = PreviewMockData.userProfile
-            self.username = mock.username
-            self.email = mock.email
-            self.birthday = mock.birthday
-            self.birthdayEnabled = true
-
-            self.gender = mock.gender
-            self.genderEnabled = true
-            return
-        }
-
-        authViewModel.loadUserProfile { username, email, birthday, gender in
-            self.username = username ?? ""
-            self.email = email ?? ""
-            if let birthday = birthday {
-                self.birthday = birthday
-                self.birthdayEnabled = true
-            } else {
-                self.birthday = nil
-                self.birthdayEnabled = false
-            }
-            self.gender = gender ?? "男性"
-            self.genderEnabled = (gender != nil)
         }
     }
 
@@ -118,7 +83,7 @@ struct EditProfileView: View {
         isSaving = true
         message = nil
 
-        authViewModel.updateProfile(
+        authVM.updateProfile(
             username: username,
             birthday: birthdayEnabled ? birthday : nil,
             gender: genderEnabled ? gender : nil
@@ -129,10 +94,8 @@ struct EditProfileView: View {
                 message = "保存に失敗しました：\(error.localizedDescription)"
             } else if success {
                 message = "プロフィールを保存しました"
-                // 少し待ってから閉じるなら DispatchQueue.main.asyncAfter で
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    dismiss()
-                }
+                // 入力完了 → フラグを下ろす
+                authVM.requiresProfileSetup = false
             } else {
                 message = "保存に失敗しました"
             }
@@ -142,6 +105,6 @@ struct EditProfileView: View {
 
 #Preview {
     let authVM = AuthViewModel()
-    return EditProfileView()
+    return ProfileSetupView()
         .environmentObject(authVM)
 }

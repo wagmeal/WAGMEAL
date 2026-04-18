@@ -7,26 +7,37 @@
 
 import Foundation
 import FirebaseFirestore
-import FirebaseFirestoreSwift
 
 // ランキング表示用のデータ構造
 struct DogFoodRanking: Identifiable {
     let id: String  // dogFoodID
     let dogFood: DogFood
     let averageRating: Double
+    let ratingCount: Int
 }
 
 class RankingViewModel: ObservableObject {
     @Published var rankedDogFoods: [DogFoodRanking] = []
     @Published var isLoading = false
+    
+    /// RankingView から参照しやすいように別名を用意（既存参照互換）
+    typealias RankedDogFood = DogFoodRanking
 
-    private let db = Firestore.firestore()
+    // MARK: - Preview判定（Xcode PreviewsではFirebaseを触らない）
+    private static var isPreview: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
+    private lazy var db: Firestore? = {
+        guard !Self.isPreview else { return nil }
+        return Firestore.firestore()
+    }()
     private let useMockData: Bool
     private var selectedSizeCategory: String?
     
     func refresh(sizeCategory: String?) {
         self.selectedSizeCategory = sizeCategory
-        if useMockData {
+        if Self.isPreview || useMockData {
             loadMockData()
         } else {
             fetchRanking()
@@ -34,6 +45,14 @@ class RankingViewModel: ObservableObject {
     }
     
     init(useMockData: Bool = false, selectedSizeCategory: String? = nil) {
+        // Previewsでは必ずモック（Firestoreを触らない）
+        if Self.isPreview {
+            self.useMockData = true
+            self.selectedSizeCategory = selectedSizeCategory
+            loadMockData()
+            return
+        }
+
         self.useMockData = useMockData
         self.selectedSizeCategory = selectedSizeCategory
 
@@ -45,6 +64,15 @@ class RankingViewModel: ObservableObject {
     }
 
     private func fetchRanking() {
+        guard !Self.isPreview else {
+            loadMockData()
+            return
+        }
+        guard let db = db else {
+            loadMockData()
+            return
+        }
+
         print("📡 fetchRanking started")
         isLoading = true
 
@@ -58,9 +86,7 @@ class RankingViewModel: ObservableObject {
 
             guard let documents = snapshot?.documents, error == nil else {
                 print("❌ evaluations fetch error: \(String(describing: error))")
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                }
+                Task { @MainActor [weak self] in self?.isLoading = false }
                 return
             }
 
@@ -71,19 +97,21 @@ class RankingViewModel: ObservableObject {
             for (dogFoodId, docs) in grouped {
                 guard !dogFoodId.isEmpty else { continue }
 
-                let ratings = docs.compactMap { $0["overall"] as? Int }
+                // 5項目化後は「また買いたい」をランキングの代表指標として使用
+                let ratings = docs.compactMap { $0["repurchase"] as? Int }
                 guard !ratings.isEmpty else { continue }
 
                 let average = Double(ratings.reduce(0, +)) / Double(ratings.count)
+                let count = ratings.count
 
                 group.enter()
-                self.db.collection("dogfood").document(dogFoodId).getDocument { snapshot, error in
+                db.collection("dogfood").document(dogFoodId).getDocument { snapshot, error in
                     defer { group.leave() }
 
                     if let snapshot = snapshot, snapshot.exists {
                         do {
                             let dogFood = try snapshot.data(as: DogFood.self)
-                            result.append(DogFoodRanking(id: dogFoodId, dogFood: dogFood, averageRating: average))
+                            result.append(DogFoodRanking(id: dogFoodId, dogFood: dogFood, averageRating: average, ratingCount: count))
                             print("✅ dogFood loaded: \(dogFood.name)")
                         } catch {
                             print("❌ dogFood decode error: \(error)")
@@ -94,10 +122,13 @@ class RankingViewModel: ObservableObject {
                 }
             }
 
-            group.notify(queue: .main) {
-                print("🎉 all dogFood loaded")
-                self.rankedDogFoods = result.sorted(by: { $0.averageRating > $1.averageRating })
-                self.isLoading = false
+            group.notify(queue: .global()) {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.rankedDogFoods = self.sortedRankings(result)
+                    self.isLoading = false
+                    print("🎉 all dogFood loaded")
+                }
             }
         }
     }
@@ -116,14 +147,31 @@ class RankingViewModel: ObservableObject {
         var mockRankings: [DogFoodRanking] = []
 
         for (dogFoodId, evals) in grouped {
-            let average = Double(evals.map { $0.overall }.reduce(0, +)) / Double(evals.count)
+            // 5項目化後は「また買いたい」をランキングの代表指標として使用
+            let average = Double(evals.map { $0.repurchase }.reduce(0, +)) / Double(evals.count)
+            let count = evals.count
 
             if let dogFood = dogFoods.first(where: { $0.id == dogFoodId }) {
-                mockRankings.append(DogFoodRanking(id: dogFoodId, dogFood: dogFood, averageRating: average))
+                mockRankings.append(DogFoodRanking(id: dogFoodId, dogFood: dogFood, averageRating: average, ratingCount: count))
             }
         }
 
-        self.rankedDogFoods = mockRankings.sorted(by: { $0.averageRating > $1.averageRating })
+        self.rankedDogFoods = sortedRankings(mockRankings)
+    }
+
+    // MARK: - Helpers
+    private func sortedRankings(_ rankings: [DogFoodRanking]) -> [DogFoodRanking] {
+        rankings.sorted { a, b in
+            // 1) 平均評価（高い順）
+            if a.averageRating != b.averageRating { return a.averageRating > b.averageRating }
+            // 2) 評価件数（多い順）
+            if a.ratingCount != b.ratingCount { return a.ratingCount > b.ratingCount }
+            // 3) 名前（昇順）
+            let nameOrder = a.dogFood.name.localizedCaseInsensitiveCompare(b.dogFood.name)
+            if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+            // 4) IDで決定（昇順）
+            return a.id.localizedCaseInsensitiveCompare(b.id) == .orderedAscending
+        }
     }
     
     

@@ -22,12 +22,13 @@ struct EditLoginInfoView: View {
                         Text(currentEmail.isEmpty ? "未設定" : currentEmail)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
 
                 Section(header: Text("変更内容")) {
                     // 新しいメールアドレス（任意）
-                    TextField("新しいメールアドレス（任意）", text: $newEmail)
+                    TextField("新しいメールアドレス（任意・確認メールが届きます）", text: $newEmail)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.none)
                         .disableAutocorrection(true)
@@ -46,6 +47,7 @@ struct EditLoginInfoView: View {
                         Text(message)
                             .font(.footnote)
                             .foregroundColor(.secondary)
+                            .padding(.vertical, 2)
                     }
                 }
             }
@@ -120,9 +122,16 @@ struct EditLoginInfoView: View {
             }
 
             if success {
-                message = "ログイン情報を更新しました"
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    dismiss()
+                if !newEmail.isEmpty {
+                    message = "確認メールを送信しました。新しいメールアドレスの受信箱でリンクを開くと変更が確定します。"
+                    // メール変更はリンク踏破まで確定しないため、この画面は閉じずに案内を見せる
+                } else if !newPassword.isEmpty {
+                    message = "パスワードを更新しました"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        dismiss()
+                    }
+                } else {
+                    message = "更新する内容がありません"
                 }
             } else {
                 message = "ログイン情報の更新に失敗しました"

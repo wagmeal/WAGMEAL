@@ -5,30 +5,53 @@
 //  Created by takumi kowatari on 2025/07/12.
 //
 import Foundation
+import FirebaseCore
 import FirebaseFirestore
-import FirebaseFirestoreSwift
 import FirebaseAuth
 
 final class DogProfileViewModel: ObservableObject {
-    @Published var dogs: [DogProfile] = []
-
-    private let db = Firestore.firestore()
+    private var db: Firestore?
     private let isMock: Bool
+
+    private static var isPreview: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
+    private var isFirebaseConfigured: Bool {
+        FirebaseApp.app() != nil
+    }
 
     // 本番用
     init() {
         self.isMock = false
+
+        // ✅ Preview では Firebase に触れない（Previews は別プロセスで configure されていないことがある）
+        guard !Self.isPreview else {
+            self.db = nil
+            return
+        }
+
+        // ✅ FirebaseApp が未configureなら Firestore/Auth を触らない
+        guard isFirebaseConfigured else {
+            self.db = nil
+            return
+        }
+
+        self.db = Firestore.firestore()
     }
 
     // モック用
     init(mockDogs: [DogProfile]) {
         self.isMock = true
+        self.db = nil
         self.dogs = mockDogs
     }
 
+    @Published var dogs: [DogProfile] = []
+
     /// Firestoreからワンちゃん一覧を取得（モック時は何もしない）
     func fetchDogs(completion: (() -> Void)? = nil) {
-        guard !isMock else {
+        guard !isMock, !Self.isPreview, isFirebaseConfigured, let db else {
             completion?()
             return
         }
@@ -54,7 +77,8 @@ final class DogProfileViewModel: ObservableObject {
                     try? $0.data(as: DogProfile.self)
                 } ?? []
 
-                DispatchQueue.main.async {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
                     // 🔥 isDeleted が true のものを除外してセットする！
                     self.dogs = fetched.filter { $0.isDeleted != true }
                     completion?()
@@ -69,6 +93,10 @@ final class DogProfileViewModel: ObservableObject {
             if let dogID = dog.id {
                 dogs.removeAll { $0.id == dogID }
             }
+            return
+        }
+
+        guard !Self.isPreview, isFirebaseConfigured, let db else {
             return
         }
 
@@ -92,9 +120,49 @@ final class DogProfileViewModel: ObservableObject {
                 return
             }
 
-            DispatchQueue.main.async {
+            Task { @MainActor [weak self] in
                 self?.dogs.removeAll { $0.id == dogID }
             }
+        }
+    }
+    
+    func updateDogImagePath(dogID: String, newPath: String, completion: ((Error?) -> Void)? = nil) {
+        guard !isMock, !Self.isPreview, isFirebaseConfigured, let db else {
+            completion?(nil)
+            return
+        }
+        guard let userID = Auth.auth().currentUser?.uid else {
+            completion?(NSError(
+                domain: "DogProfileViewModel",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "ユーザーIDが取得できませんでした"]
+            ))
+            return
+        }
+
+        let docRef = db
+            .collection("users")
+            .document(userID)
+            .collection("dogs")
+            .document(dogID)
+
+        docRef.updateData(["imagePath": newPath]) { [weak self] error in
+            guard let self = self else { return }
+
+            if let error = error {
+                completion?(error)
+                return
+            }
+
+            // ローカル配列の imagePath も更新
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let index = self.dogs.firstIndex(where: { $0.id == dogID }) {
+                    self.dogs[index].imagePath = newPath
+                }
+            }
+
+            completion?(nil)
         }
     }
 
@@ -108,6 +176,11 @@ final class DogProfileViewModel: ObservableObject {
             if let idx = dogs.firstIndex(where: { $0.id == updated.id }) {
                 dogs[idx] = newDog
             }
+            completion?(nil)
+            return
+        }
+
+        guard !Self.isPreview, isFirebaseConfigured, let db else {
             completion?(nil)
             return
         }
@@ -133,8 +206,9 @@ final class DogProfileViewModel: ObservableObject {
                     guard let self = self else { return }
                     if error == nil {
                         // ローカル配列も同期更新
-                        if let idx = self.dogs.firstIndex(where: { $0.id == dogID }) {
-                            DispatchQueue.main.async {
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            if let idx = self.dogs.firstIndex(where: { $0.id == dogID }) {
                                 self.dogs[idx] = newDog
                             }
                         }

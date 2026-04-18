@@ -2,7 +2,16 @@ import SwiftUI
 
 struct DogCard: View {
     let dog: DogProfile
+    /// いま挙げているドッグフード（外から渡す）
+    var currentDogFoods: [DogFood] = []
+
+    /// 「記録を確認する」押下
     var onShowDetail: (() -> Void)? = nil
+
+    /// 「いまのごはん」の各行押下（親側でドッグフード詳細へ遷移させる）
+    var onTapCurrentFood: ((DogFood) -> Void)? = nil
+
+    @Namespace private var foodNamespace
 
     @State private var showEdit = false
     @EnvironmentObject var dogVM: DogProfileViewModel
@@ -36,10 +45,26 @@ struct DogCard: View {
                     Text(dog.name)
                         .font(.title3.weight(.semibold))
 
-                    HStack(spacing: 8) {
-                        TagView(text: dog.breed)
-                        if let age = ageString(from: dog.birthDate) {
-                            TagView(text: age)
+                    ViewThatFits(in: .horizontal) {
+                        // まずは横並びで表示を試す
+                        HStack(alignment: .top, spacing: 8) {
+                            TagView(text: dog.breed, maxLines: 2)
+                                .layoutPriority(1)
+
+                            if let age = ageString(from: dog.birthDate) {
+                                TagView(text: age, maxLines: 1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                        }
+
+                        // 横が厳しい場合は縦並びにフォールバック（溢れ防止）
+                        VStack(alignment: .leading, spacing: 6) {
+                            TagView(text: dog.breed, maxLines: 2)
+
+                            if let age = ageString(from: dog.birthDate) {
+                                TagView(text: age, maxLines: 1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
                         }
                     }
                     .padding(.top, 2)
@@ -49,13 +74,69 @@ struct DogCard: View {
 
             Divider().padding(.vertical, 4)
 
+            // いま挙げてるドッグフード
+            VStack(alignment: .leading, spacing: 10) {
+                Text("いま食べているごはん")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.secondary)
+
+                if currentDogFoods.isEmpty {
+                    Text("記録がありません")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 6)
+                } else {
+                    VStack(spacing: 10) {
+                        ForEach(currentDogFoods) { food in
+                            let matchedID = food.id ?? food.imagePath
+
+                            Button {
+                                onTapCurrentFood?(food)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    DogFoodImageView(
+                                        imagePath: food.imagePath,
+                                        storagePath: food.storagePath,
+                                        matchedID: matchedID,
+                                        namespace: foodNamespace
+                                    )
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        // 1行目：ブランド名
+                                        if let brand = food.brand, !brand.isEmpty {
+                                            Text(brand)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        // 2行目：ドッグフード名
+                                        Text(food.name)
+                                            .font(.subheadline)
+                                            .foregroundColor(.primary)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer(minLength: 0)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            Divider().padding(.vertical, 4) // ボタンの上にDivider
+
             // カード内：詳細へ（角丸の長方形ボタン）
             HStack {
                 Spacer()
                 Button {
                     onShowDetail?()
                 } label: {
-                    Text("過去の記録を見る")
+                    Text("記録を確認する")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -111,11 +192,20 @@ private struct InfoRow: View {
 
 private struct TagView: View {
     let text: String
+    var maxLines: Int = 1
+
     var body: some View {
         Text(text)
             .font(.caption)
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Capsule().fill(Color(.systemGray6)))
+            .lineLimit(maxLines)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.systemGray6))
+            )
     }
 }
 
@@ -132,18 +222,31 @@ private struct DogCardPreviewWrapper: View {
     @State private var path: [DogProfile] = []
     let dog = PreviewMockData.dogs.first!
 
+    @StateObject private var foodVM = DogFoodViewModel(mockData: true)
+
+    // いまのごはん（プレビュー用）
+    private var currentFoods: [DogFood] {
+        Array(foodVM.dogFoods.prefix(2))
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
-            DogCard(dog: dog, onShowDetail: { path.append(dog) })
-                .padding()
-                .background(Color(.systemGroupedBackground))
-                .navigationTitle("DogCard Preview")
-                .navigationDestination(for: DogProfile.self) { pushedDog in
-                    DogDetailView(
-                        dog: pushedDog,
-                        onClose: { path.removeLast() }   // ← これを渡す
-                    )
-                }
+            DogCard(
+                dog: dog,
+                currentDogFoods: currentFoods,
+                onShowDetail: { path.append(dog) },
+                onTapCurrentFood: nil
+            )
+            .environmentObject(DogProfileViewModel(mockDogs: PreviewMockData.dogs))
+            .padding()
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("DogCard Preview")
+            .navigationDestination(for: DogProfile.self) { pushedDog in
+                DogDetailView(
+                    dog: pushedDog,
+                    onClose: { path.removeLast() }   // ← これを渡す
+                )
+            }
         }
     }
 }
@@ -158,13 +261,26 @@ private struct DogCardListPreviewWrapper: View {
     @State private var path: [DogProfile] = []
     let dogs = PreviewMockData.dogs
 
+    @StateObject private var foodVM = DogFoodViewModel(mockData: true)
+
+    // いまのごはん（プレビュー用）
+    private var currentFoods: [DogFood] {
+        Array(foodVM.dogFoods.prefix(2))
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(spacing: 12) {
                     ForEach(dogs) { dog in
-                        DogCard(dog: dog, onShowDetail: { path.append(dog) })
-                            .padding(.horizontal)
+                        DogCard(
+                            dog: dog,
+                            currentDogFoods: currentFoods,
+                            onShowDetail: { path.append(dog) },
+                            onTapCurrentFood: nil
+                        )
+                        .environmentObject(DogProfileViewModel(mockDogs: PreviewMockData.dogs))
+                        .padding(.horizontal)
                     }
                     .padding(.vertical, 8)
                 }

@@ -81,5 +81,3 @@ struct DogAvatarView: View {
         return nil
     }
 }
-
-

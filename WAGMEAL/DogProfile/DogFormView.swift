@@ -15,9 +15,118 @@ enum DogFormMode: Equatable {
 
 // MARK: - Breed Presets (shared)
 struct DogBreedPresets {
-    static let small = ["チワワ", "トイプードル", "マルチーズ", "ヨークシャーテリア", "ポメラニアン", "ミニチュアダックスフンド"]
-    static let medium = ["柴犬", "ビーグル", "フレンチブルドッグ", "コーギー", "ボーダーコリー"]
-    static let large = ["ラブラドール", "ゴールデンレトリバー", "スタンダードプードル", "バーニーズ", "グレートピレニーズ"]
+    static let small = [
+        "イタリアン・グレーハウンド",
+        "ウェスト・ハイランド・ホワイト・テリア",
+        "カニンヘン・ダックスフンド",
+        "カバリアプー（ミックス犬）",
+        "キャバリア・キング・チャールズ・スパニエル",
+        "ケアーン・テリア",
+        "シーズー",
+        "シルキー・テリア",
+        "シルバープードル",
+        "ジャック・ラッセル・テリア",
+        "狆（チン）",
+        "スキッパーキ",
+        "スコティッシュ・テリア",
+        "ダックスフンド（ミニチュア）",
+        "ダンディ・ディンモント・テリア",
+        "タイニー・プードル",
+        "チワワ",
+        "チワックス（ミックス犬）",
+        "チワプー（ミックス犬）",
+        "チワブル（ミックス犬）",
+        "ティーカップ・プードル",
+        "トイ・フォックス・テリア",
+        "トイ・プードル",
+        "トイ・マンチェスター・テリア",
+        "日本テリア",
+        "ノーフォーク・テリア",
+        "ノーリッチ・テリア",
+        "ハバニーズ",
+        "パグ",
+        "パピヨン",
+        "パピプー（ミックス犬）",
+        "ビション・フリーゼ",
+        "ブリュッセル・グリフォン",
+        "ボストン・テリア",
+        "ボロニーズ",
+        "ポメチワ（ミックス犬）",
+        "ポメプー（ミックス犬）",
+        "ポメラニアン",
+        "マルチーズ",
+        "マルプー（ミックス犬）",
+        "マンチェスター・テリア",
+        "ミニチュア・シュナウザー",
+        "ミニチュア・ピンシャー",
+        "ミニチュア・ブル・テリア",
+        "ヨークシャー・テリア",
+        "ヨープー（ミックス犬）"
+    ]
+
+    static let medium = [
+        "アメリカン・コッカー・スパニエル",
+        "アメリカン・スタッフォードシャー・テリア",
+        "アメリカン・ブリー",
+        "イングリッシュ・コッカー・スパニエル",
+        "イングリッシュ・スプリンガー・スパニエル",
+        "イングリッシュ・ブルドッグ",
+        "ウィペット",
+        "オーストラリアン・キャトル・ドッグ",
+        "オーストラリアン・シェパード",
+        "コーイケルホンディエ",
+        "コーギー",
+        "コッカプー（ミックス犬）",
+        "シェットランド・シープドッグ",
+        "柴犬",
+        "柴プー（ミックス犬）",
+        "シュナウザー（スタンダード）",
+        "スタッフォードシャー・ブル・テリア",
+        "ダックスフンド（スタンダード）",
+        "ダルメシアン",
+        "日本スピッツ",
+        "バセット・ハウンド",
+        "バセンジー",
+        "ビーグル",
+        "フレンチ・ブルドッグ",
+        "ブル・テリア",
+        "ブルドッグ",
+        "ボーダー・コリー",
+        "ミニチュア・アメリカン・シェパード"
+    ]
+
+    static let large = [
+        "アイリッシュ・ウルフハウンド",
+        "アイリッシュ・セッター",
+        "秋田犬",
+        "アフガン・ハウンド",
+        "アラスカン・マラミュート",
+        "エアデール・テリア",
+        "オーストラリアン・ラブラドゥードル",
+        "オールド・イングリッシュ・シープドッグ",
+        "グレート・デーン",
+        "グレート・ピレニーズ",
+        "グレーハウンド",
+        "ゴールデン・レトリーバー",
+        "ゴールデンドゥードル（ミックス犬）",
+        "サモエド",
+        "サルーキ",
+        "シベリアン・ハスキー",
+        "シュナウザー（ジャイアント）",
+        "スタンダード・プードル",
+        "セント・バーナード",
+        "ドーベルマン",
+        "ナポリタン・マスティフ",
+        "ニューファンドランド",
+        "バーニーズ・マウンテン・ドッグ",
+        "フラットコーテッド・レトリーバー",
+        "ラブラドゥードル",
+        "ラブラドール・レトリーバー",
+        "ラフ・コリー",
+        "レオンベルガー",
+        "ロットワイラー",
+        "ワイマラナー"
+    ]
 }
 
 // MARK: - Allergy Presets (per dog)
@@ -44,6 +153,9 @@ final class DogFormState: ObservableObject {
     @Published var breed: String = ""
     @Published var size: String = ""
     @Published var birthDate: Date = Date()
+
+    // Wheel picker selection (breed id). "__other__" means user will input manually.
+    @Published var selectedBreedID: String = ""
 
     // Per-dog allergy selection (labels from DogAllergyPresets.options)
     @Published var allergies: Set<String> = []
@@ -84,7 +196,10 @@ final class DogFormState: ObservableObject {
                 }
             }()
             if !exists { showOtherInputFieldForSize = dog.sizeCategory; otherBreedInput = dog.breed }
-            
+
+            // Wheel selection
+            self.selectedBreedID = exists ? dog.breed : "__other__"
+
             // 既存DogProfileのアレルギーフラグからフォームの選択を復元
             if dog.allergicChicken ?? false { allergies.insert("鶏肉") }
             if dog.allergicBeef ?? false { allergies.insert("牛肉") }
@@ -96,6 +211,13 @@ final class DogFormState: ObservableObject {
             if dog.allergicWheat ?? false { allergies.insert("小麦") }
             if dog.allergicCorn ?? false { allergies.insert("トウモロコシ") }
             if dog.allergicSoy ?? false { allergies.insert("大豆") }
+        }
+        // For create mode, set default selection
+        switch mode {
+        case .create:
+            self.selectedBreedID = ""
+        case .edit:
+            break
         }
     }
 }
@@ -119,6 +241,153 @@ struct DogFormView: View {
     @State private var chipVPadding: CGFloat = 8
     @State private var otherInputWidth: CGFloat = 250
 
+    @State private var showDeletePhotoAlert = false
+    @State private var showPhotoPicker = false
+    @State private var showBreedPickerSheet = false
+
+    // MARK: - Breed Wheel Picker Helpers
+    private struct BreedOption: Identifiable {
+        let id: String
+        let breed: String
+        let sizeCategory: String
+    }
+
+    /// 表示順を完全に手動管理する犬種マスター（この順でリールに表示される）
+    /// ※ 必ずDogBreedPresetsの全犬種を含めてください（含まれていないとリールに出ません）
+    private let orderedBreeds: [(breed: String, size: String)] = [
+        ("アイリッシュ・ウルフハウンド", "大型犬"),
+        ("アイリッシュ・セッター", "大型犬"),
+        ("秋田犬", "大型犬"),
+        ("アフガン・ハウンド", "大型犬"),
+        ("アメリカン・コッカー・スパニエル", "中型犬"),
+        ("アメリカン・スタッフォードシャー・テリア", "中型犬"),
+        ("アメリカン・ブリー", "中型犬"),
+        ("アラスカン・マラミュート", "大型犬"),
+        ("イタリアン・グレーハウンド", "小型犬"),
+        ("イングリッシュ・コッカー・スパニエル", "中型犬"),
+        ("イングリッシュ・スプリンガー・スパニエル", "中型犬"),
+        ("イングリッシュ・ブルドッグ", "中型犬"),
+        ("ウィペット", "中型犬"),
+        ("ウェスト・ハイランド・ホワイト・テリア", "小型犬"),
+        ("エアデール・テリア", "大型犬"),
+        ("オーストラリアン・キャトル・ドッグ", "中型犬"),
+        ("オーストラリアン・シェパード", "中型犬"),
+        ("オーストラリアン・ラブラドゥードル", "大型犬"),
+        ("オールド・イングリッシュ・シープドッグ", "大型犬"),
+        ("カニンヘン・ダックスフンド", "小型犬"),
+        ("カバリアプー（ミックス犬）", "小型犬"),
+        ("キャバリア・キング・チャールズ・スパニエル", "小型犬"),
+        ("グレート・デーン", "大型犬"),
+        ("グレート・ピレニーズ", "大型犬"),
+        ("グレーハウンド", "大型犬"),
+        ("ケアーン・テリア", "小型犬"),
+        ("コーイケルホンディエ", "中型犬"),
+        ("コーギー", "中型犬"),
+        ("コッカプー（ミックス犬）", "中型犬"),
+        ("ゴールデン・レトリーバー", "大型犬"),
+        ("ゴールデンドゥードル（ミックス犬）", "大型犬"),
+        ("サモエド", "大型犬"),
+        ("サルーキ", "大型犬"),
+        ("シーズー", "小型犬"),
+        ("シェットランド・シープドッグ", "中型犬"),
+        ("柴犬", "中型犬"),
+        ("柴プー（ミックス犬）", "中型犬"),
+        ("シベリアン・ハスキー", "大型犬"),
+        ("シルキー・テリア", "小型犬"),
+        ("シルバープードル", "小型犬"),
+        ("ジャック・ラッセル・テリア", "小型犬"),
+        ("シュナウザー（ジャイアント）", "大型犬"),
+        ("シュナウザー（スタンダード）", "中型犬"),
+        ("スキッパーキ", "小型犬"),
+        ("スコティッシュ・テリア", "小型犬"),
+        ("スタッフォードシャー・ブル・テリア", "中型犬"),
+        ("スタンダード・プードル", "大型犬"),
+        ("セント・バーナード", "大型犬"),
+        ("ダックスフンド（スタンダード）", "中型犬"),
+        ("ダックスフンド（ミニチュア）", "小型犬"),
+        ("ダンディ・ディンモント・テリア", "小型犬"),
+        ("ダルメシアン", "中型犬"),
+        ("タイニー・プードル", "小型犬"),
+        ("チワワ", "小型犬"),
+        ("チワックス（ミックス犬）", "小型犬"),
+        ("チワプー（ミックス犬）", "小型犬"),
+        ("チワブル（ミックス犬）", "小型犬"),
+        ("狆（チン）", "小型犬"),
+        ("ティーカップ・プードル", "小型犬"),
+        ("トイ・フォックス・テリア", "小型犬"),
+        ("トイ・プードル", "小型犬"),
+        ("トイ・マンチェスター・テリア", "小型犬"),
+        ("ドーベルマン", "大型犬"),
+        ("ナポリタン・マスティフ", "大型犬"),
+        ("ニューファンドランド", "大型犬"),
+        ("日本スピッツ", "中型犬"),
+        ("日本テリア", "小型犬"),
+        ("ノーフォーク・テリア", "小型犬"),
+        ("ノーリッチ・テリア", "小型犬"),
+        ("ハバニーズ", "小型犬"),
+        ("パグ", "小型犬"),
+        ("パピヨン", "小型犬"),
+        ("パピプー（ミックス犬）", "小型犬"),
+        ("バーニーズ・マウンテン・ドッグ", "大型犬"),
+        ("バセット・ハウンド", "中型犬"),
+        ("バセンジー", "中型犬"),
+        ("ビーグル", "中型犬"),
+        ("ビション・フリーゼ", "小型犬"),
+        ("フラットコーテッド・レトリーバー", "大型犬"),
+        ("フレンチ・ブルドッグ", "中型犬"),
+        ("ブリュッセル・グリフォン", "小型犬"),
+        ("ブル・テリア", "中型犬"),
+        ("ブルドッグ", "中型犬"),
+        ("ボーダー・コリー", "中型犬"),
+        ("ボストン・テリア", "小型犬"),
+        ("ボロニーズ", "小型犬"),
+        ("ポメチワ（ミックス犬）", "小型犬"),
+        ("ポメプー（ミックス犬）", "小型犬"),
+        ("ポメラニアン", "小型犬"),
+        ("マルチーズ", "小型犬"),
+        ("マルプー（ミックス犬）", "小型犬"),
+        ("マンチェスター・テリア", "小型犬"),
+        ("ミニチュア・アメリカン・シェパード", "中型犬"),
+        ("ミニチュア・シュナウザー", "小型犬"),
+        ("ミニチュア・ピンシャー", "小型犬"),
+        ("ミニチュア・ブル・テリア", "小型犬"),
+        ("ヨークシャー・テリア", "小型犬"),
+        ("ヨープー（ミックス犬）", "小型犬"),
+        ("ラブラドゥードル", "大型犬"),
+        ("ラブラドール・レトリーバー", "大型犬"),
+        ("ラフ・コリー", "大型犬"),
+        ("レオンベルガー", "大型犬"),
+        ("ロットワイラー", "大型犬"),
+        ("ワイマラナー", "大型犬")
+    ]
+
+    private var breedOptions: [BreedOption] {
+        let ordered = orderedBreeds.map {
+            BreedOption(id: $0.breed, breed: $0.breed, sizeCategory: $0.size)
+        }
+        return ordered + [BreedOption(id: "__other__", breed: "手動入力", sizeCategory: "")]
+    }
+
+    private func sizeCategory(forBreedID id: String) -> String? {
+        breedOptions.first(where: { $0.id == id })?.sizeCategory
+    }
+
+    // MARK: - Breed Picker Selection Handler
+    private func applyBreedSelection(_ newValue: String) {
+        if newValue == "__other__" {
+            // 手入力モード
+            if form.size.isEmpty { form.size = "小型犬" }
+            // 手動入力では、この画面で otherBreedInput を入力して form.breed に反映する
+            form.showOtherInputFieldForSize = form.size
+            form.breed = form.otherBreedInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let sizeCat = sizeCategory(forBreedID: newValue) {
+            form.size = sizeCat
+            form.breed = newValue
+            form.showOtherInputFieldForSize = nil
+            form.otherBreedInput = ""
+        }
+    }
+
     init(mode: DogFormMode, dogVM: DogProfileViewModel, selectedDogID: Binding<String?>? = nil) {
         self.mode = mode
         self.dogVM = dogVM
@@ -137,13 +406,13 @@ struct DogFormView: View {
                                 Image(uiImage: ui)
                                     .resizable()
                                     .scaledToFill()
-                            } else if case .edit(let dog) = mode, let path = dog.imagePath, !path.isEmpty {
+                            } else if case .edit(let dog) = mode, let path = dog.imagePath, !path.isEmpty, !form.removeImage {
                                 StorageImageView(imagePath: path, width: 72, height: 72, contentMode: .fill, cornerRadius: 36)
                             } else {
                                 Image(placeholderAsset(for: effectiveSize))
                                     .resizable()
                                     .scaledToFit()
-                                    .padding(20)
+                                    .padding(15)
                                     .background(Color(UIColor.systemGray5))
                             }
                         }
@@ -151,27 +420,35 @@ struct DogFormView: View {
                         .clipShape(Circle())
 
                         VStack(alignment: .leading, spacing: 8) {
-                            PhotosPicker(selection: $form.pickedItem, matching: .images, photoLibrary: .shared()) {
-                                Label(photoButtonTitle, systemImage: "photo")
-                            }
-                            .onChange(of: form.pickedItem) { newItem in
-                                guard let newItem else { return }
-                                Task {
-                                    if let data = try? await newItem.loadTransferable(type: Data.self),
-                                       let img = UIImage(data: data) {
-                                        await MainActor.run { form.cropPayload = ImageCropPayload(image: img) }
+                            HStack(spacing: 100) {
+                                Text(photoButtonTitle)
+                                    .foregroundColor(.blue)
+                                    .onTapGesture {
+                                        showPhotoPicker = true
                                     }
+                                    .photosPicker(
+                                        isPresented: $showPhotoPicker,
+                                        selection: $form.pickedItem,
+                                        matching: .images,
+                                        photoLibrary: .shared()
+                                    )
+                                    .onChange(of: form.pickedItem) { newItem in
+                                        guard let newItem else { return }
+                                        Task {
+                                            if let data = try? await newItem.loadTransferable(type: Data.self),
+                                               let img = UIImage(data: data) {
+                                                await MainActor.run { form.cropPayload = ImageCropPayload(image: img) }
+                                            }
+                                        }
+                                    }
+                                
+                                if shouldShowDeletePhotoButton {
+                                    Text("削除")
+                                        .foregroundColor(.red)
+                                        .onTapGesture {
+                                            showDeletePhotoAlert = true
+                                        }
                                 }
-                            }
-
-                            if case .edit(let dog) = mode, (dog.imagePath != nil || form.pickedImage != nil) {
-                                Button(role: .destructive) {
-                                    form.removeImage.toggle()
-                                    if form.removeImage { form.pickedImage = nil }
-                                } label: {
-                                    Text(form.removeImage ? "画像を削除（取り消す）" : "画像を削除")
-                                }
-                                .font(.caption)
                             }
                         }
                     }
@@ -194,11 +471,51 @@ struct DogFormView: View {
                         .environment(\.locale, Locale(identifier: "ja_JP"))
                 }
 
-                // MARK: 犬種（サイズ別）
-                Section(header: Text("犬種（サイズ別）")) {
-                    breedPickerSection(title: "小型犬", breeds: DogBreedPresets.small, size: "小型犬", iconName: "smalldog")
-                    breedPickerSection(title: "中型犬", breeds: DogBreedPresets.medium, size: "中型犬", iconName: "middledog")
-                    breedPickerSection(title: "大型犬", breeds: DogBreedPresets.large, size: "大型犬", iconName: "bigdog")
+                // MARK: 犬種（タップでリール表示）
+                Section(header: Text("犬種")) {
+                    Button {
+                        showBreedPickerSheet = true
+                    } label: {
+                        HStack {
+                            Text("犬種")
+                                .foregroundColor(.primary)
+                                .fixedSize()
+                            Spacer()
+                            Text(form.selectedBreedID.isEmpty ? "選択してください" : (form.selectedBreedID == "__other__" ? (form.otherBreedInput.isEmpty ? "手動入力" : form.otherBreedInput) : form.selectedBreedID))
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.trailing)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .layoutPriority(1)
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    if form.selectedBreedID == "__other__" {
+                        // 手動入力：この画面（Form）上でサイズと犬種を入力
+                        Picker("サイズ", selection: $form.size) {
+                            Text("小型犬").tag("小型犬")
+                            Text("中型犬").tag("中型犬")
+                            Text("大型犬").tag("大型犬")
+                        }
+                        .pickerStyle(.segmented)
+
+                        TextField("犬種を入力", text: $form.otherBreedInput)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: form.otherBreedInput) { newValue in
+                                form.breed = newValue
+                            }
+                    } else {
+                        // サイズは裏で保持（ユーザーには参考表示として出す）
+                        if !form.size.isEmpty {
+                            Text("サイズ：\(form.size)")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
 
                 // MARK: アレルギー（わんちゃんごと）
@@ -241,6 +558,46 @@ struct DogFormView: View {
                 }
             )
         }
+        .alert("写真を削除しますか？", isPresented: $showDeletePhotoAlert) {
+            Button("キャンセル", role: .cancel) {}
+            Button("はい", role: .destructive) {
+                handleDeletePhotoConfirmed()
+            }
+        }
+            .sheet(isPresented: $showBreedPickerSheet) {
+                NavigationStack {
+                    VStack(spacing: 0) {
+                        Picker("犬種", selection: $form.selectedBreedID) {
+                            ForEach(breedOptions) { opt in
+                                Text(opt.breed).tag(opt.id)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 260)
+                        .clipped()
+                        .onChange(of: form.selectedBreedID) { newValue in
+                            applyBreedSelection(newValue)
+                        }
+                    }
+                    .navigationTitle("犬種を選択")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("キャンセル") {
+                                // ここでは選択を戻さず閉じる（必要なら後で一時保存方式に変更可能）
+                                showBreedPickerSheet = false
+                            }
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完了") {
+                                // 手動入力の場合でも、入力は Form 側で行うため常に閉じてOK
+                                showBreedPickerSheet = false
+                            }
+                        }
+                    }
+                }
+                .presentationDetents([.height(340)])
+            }
     }
 
     // MARK: - Derived
@@ -257,7 +614,39 @@ struct DogFormView: View {
         }
     }
 
+    // MARK: - Derived
+    private var shouldShowDeletePhotoButton: Bool {
+        if form.pickedImage != nil {
+            return true
+        }
+        if case .edit(let dog) = mode,
+           let path = dog.imagePath,
+           !path.isEmpty,
+           !form.removeImage {
+            return true
+        }
+        return false
+    }
+
     // MARK: - Actions
+    private func handleDeletePhotoConfirmed() {
+        // 1. 直近で選択した写真がある場合は、その選択を取り消す
+        if form.pickedImage != nil {
+            form.pickedImage = nil
+            form.pickedItem = nil
+            form.removeImage = false
+            return
+        }
+
+        // 2. Editモードで既存画像のみある場合は、削除フラグを立てて画像を消す
+        switch mode {
+        case .edit:
+            form.removeImage = true
+        case .create:
+            break
+        }
+    }
+
     private func onPrimaryButton() {
         switch mode {
         case .create: createDog()
@@ -301,7 +690,8 @@ struct DogFormView: View {
 
                 guard let image = form.pickedImage else { finishCreateSuccess(docRef: docRef, newDog: newDog) ; return }
 
-                let path = "users/\(userID)/dogs/\(docRef.documentID).jpg"
+                let timestamp = Int(Date().timeIntervalSince1970)
+                let path = "users/\(userID)/dogs/\(docRef.documentID)/\(timestamp).jpg"
                 upload(image: image, to: path) { result in
                     switch result {
                     case .success:
@@ -362,39 +752,65 @@ struct DogFormView: View {
         edited.allergicCorn    = form.allergies.contains("トウモロコシ")
         edited.allergicSoy     = form.allergies.contains("大豆")
 
-        let path = "users/\(userID)/dogs/\(dogID).jpg"
-        let db = Firestore.firestore()
-        let docRef = db.collection("users").document(userID).collection("dogs").document(dogID)
+        let currentPath = dog.imagePath
 
         // Deletion case (no new image)
         if form.removeImage && form.pickedImage == nil {
-            if let _ = dog.imagePath {
-                Storage.storage().reference(withPath: path).delete(completion: nil)
+            if let existingPath = currentPath, !existingPath.isEmpty {
+                Storage.storage().reference(withPath: existingPath).delete(completion: nil)
             }
             edited.imagePath = nil
             dogVM.updateDog(edited) { err in
                 form.isWorking = false
-                if let err { form.errorMessage = "更新に失敗: \(err.localizedDescription)" }
-                else { dismiss() }
+                if let err {
+                    form.errorMessage = "更新に失敗: \(err.localizedDescription)"
+                } else {
+                    dogVM.fetchDogs()
+                    dismiss()
+                }
             }
             return
         }
 
         // New/overwritten image
         if let image = form.pickedImage {
-            upload(image: image, to: path) { result in
+            // ユーザーIDとdogIDに基づくタイムスタンプ付きファイル名で保存
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let newPath = "users/\(userID)/dogs/\(dogID)/\(timestamp).jpg"
+            
+            // 古い画像があれば削除（パスが変わっている場合）
+            if let existingPath = currentPath, !existingPath.isEmpty, existingPath != newPath {
+                Storage.storage().reference(withPath: existingPath).delete(completion: nil)
+            }
+            
+            upload(image: image, to: newPath) { result in
                 switch result {
                 case .success:
-                    docRef.updateData(["imagePath": path]) { _ in
-                        edited.imagePath = path
+                    // ローカルモデルにも新しいパスを反映
+                    edited.imagePath = newPath
+                    
+                    // Firestore / ViewModel の imagePath を更新
+                    dogVM.updateDogImagePath(dogID: dogID, newPath: newPath) { err in
+                        if let err {
+                            form.isWorking = false
+                            form.errorMessage = "画像パスの更新に失敗: \(err.localizedDescription)"
+                            return
+                        }
+                        
+                        // 残りのフィールドを更新
                         dogVM.updateDog(edited) { err in
                             form.isWorking = false
-                            if let err { form.errorMessage = "更新に失敗: \(err.localizedDescription)" }
-                            else { dismiss() }
+                            if let err {
+                                form.errorMessage = "更新に失敗: \(err.localizedDescription)"
+                            } else {
+                                dogVM.fetchDogs()
+                                dismiss()
+                            }
                         }
                     }
                 case .failure(let e):
-                    form.isWorking = false; form.errorMessage = "画像アップロードに失敗: \(e.localizedDescription)"
+                    form.isWorking = false
+                    form.errorMessage = "画像アップロードに失敗: \(e.localizedDescription)"
                 }
             }
         } else {
@@ -402,8 +818,12 @@ struct DogFormView: View {
             edited.imagePath = dog.imagePath
             dogVM.updateDog(edited) { err in
                 form.isWorking = false
-                if let err { form.errorMessage = "更新に失敗: \(err.localizedDescription)" }
-                else { dismiss() }
+                if let err {
+                    form.errorMessage = "更新に失敗: \(err.localizedDescription)"
+                } else {
+                    dogVM.fetchDogs()
+                    dismiss()
+                }
             }
         }
     }
@@ -552,4 +972,3 @@ struct EditDogView: View { // replacement for DogEditView
     return EditDogView(dog: mockDogs.first!)
         .environmentObject(vm)
 }
-

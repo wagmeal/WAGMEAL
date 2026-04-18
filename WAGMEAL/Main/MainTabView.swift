@@ -26,7 +26,7 @@ struct MainTabView: View {
     @EnvironmentObject var tabRouter: MainTabRouter   // ← 追加
     @AppStorage("selectedDogID") private var selectedDogID: String?
 
-    @StateObject private var rankingVM = RankingViewModel(useMockData: false)
+    @StateObject private var rankingVM = RankingViewModel()
     @State private var searchReloadKey = UUID()
     @State private var myDogReloadKey = UUID()
     @State private var favoritesReloadKey = UUID()
@@ -63,8 +63,12 @@ struct MainTabView: View {
                         .opacity(tabRouter.selectedTab == .favorites ? 1 : 0)
                         .allowsHitTesting(tabRouter.selectedTab == .favorites)
 
-                    RankingView()
-                        .id(rankingReloadKey)
+                    // TODO: データが十分に蓄積されたら RankingView() に戻す
+                    // RankingView()
+                    //     .id(rankingReloadKey)
+                    //     .opacity(tabRouter.selectedTab == .ranking ? 1 : 0)
+                    //     .allowsHitTesting(tabRouter.selectedTab == .ranking)
+                    RankingComingSoonView()
                         .opacity(tabRouter.selectedTab == .ranking ? 1 : 0)
                         .allowsHitTesting(tabRouter.selectedTab == .ranking)
                 }
@@ -83,6 +87,15 @@ struct MainTabView: View {
             }
 
             MainHeaderView()
+        }
+        .onChange(of: authVM.isLoggedIn) { isLoggedIn in
+            if !isLoggedIn {
+                // ログアウト時：前ユーザーの状態が残らないようにクリア
+                selectedDogID = nil
+                dogVM.dogs = []
+                tabRouter.selectedTab = .myDog
+                myDogReloadKey = UUID()
+            }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
     }
@@ -115,7 +128,6 @@ struct MainTabView: View {
 
                 }
             } else {
-                // 違うタブを押したときは単純にタブを切り替え
                 logTabEvent(tab, action: "switch")
                 tabRouter.selectedTab = tab
             }
@@ -134,6 +146,25 @@ struct MainTabView: View {
             )
             .padding(.horizontal, 4)
         }
+    }
+}
+
+// MARK: - ランキング準備中画面
+private struct RankingComingSoonView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image("Logoline")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 100)
+            Text("準備中")
+                .font(.title2.bold())
+            Text("ランキング機能は近日公開予定です")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
     }
 }
 

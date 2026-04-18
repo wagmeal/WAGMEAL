@@ -4,43 +4,121 @@
 //
 //  Created by takumi kowatari on 2025/07/13.
 //
+
 import Foundation
 import FirebaseFirestore
 import FirebaseStorage
 import FirebaseAuth
 
+// MARK: - Filter Models (Food Type & Nutrients)
+
+enum FoodTypeFilter: String, CaseIterable, Identifiable, Codable {
+    case all
+    case dry
+    case wet
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "すべて"
+        case .dry: return "ドライのみ"
+        case .wet: return "ウェットのみ"
+        }
+    }
+}
+
+/// 成分数値フィルタ（範囲指定）
+/// - isEnabled == false のときは未適用
+/// - minValue / maxValue が nil の場合はその側の条件なし
+struct NumericFilter: Codable, Hashable {
+    var isEnabled: Bool = false
+    var minValue: Double? = nil
+    var maxValue: Double? = nil
+
+    init(isEnabled: Bool = false, minValue: Double? = nil, maxValue: Double? = nil) {
+        self.isEnabled = isEnabled
+        self.minValue = minValue
+        self.maxValue = maxValue
+    }
+
+    static func disabled() -> NumericFilter {
+        .init(isEnabled: false, minValue: nil, maxValue: nil)
+    }
+}
+
 class DogFoodViewModel: ObservableObject {
+    // MARK: - Preview判定（Xcode PreviewsではFirebase/Networkを叩かない）
+    private static var isPreview: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
     @Published var searchText: String = ""
     @Published var isSearchActive: Bool = false
     @Published var dogFoods: [DogFood] = []
-    @Published var favoriteDogFoodIDs: Set<String> = []  // 🔸 追加
+    // 🔸 追加：検索タブで開いているドッグフード（外部画面からもセットして遷移に使う）
+    @Published var selectedDogFood: DogFood? = nil
+    @Published var favoriteDogFoodIDs: Set<String> = []
+    // お気に入り登録日時（createdAt降順ソート用）。@Publishedは不要—favoriteDogFoodIDsの更新で同時に書き換わるため
+    private var favoriteCreatedAts: [String: Date] = [:]
     @Published var selectedIngredientFilters: Set<IngredientFilter> = []
+    // 「含む」フィルタ（この成分が入っているフードに絞り込む）
+    @Published var includeIngredientFilters: Set<IngredientFilter> = []
     // ブランド一覧から「すべて」を選択したときに全件表示するフラグ
     @Published var showAllFoodsFromBrandExplorer: Bool = false
     
+    // MARK: - 追加：フード種類フィルタ
+    @Published var foodTypeFilter: FoodTypeFilter = .all
+
+    // MARK: - 追加：成分数値フィルタ（範囲指定・未適用は isEnabled=false）
+    @Published var caloriesFilter: NumericFilter = .disabled()
+    @Published var proteinFilter: NumericFilter = .disabled()
+    @Published var fatFilter: NumericFilter = .disabled()
+    @Published var fiberFilter: NumericFilter = .disabled()
+    @Published var ashFilter: NumericFilter = .disabled()
+    @Published var moistureFilter: NumericFilter = .disabled()
+    
+    // フード一覧の初期ロード状態（FavoritesViewのスピナー制御に使用）
+    @Published private(set) var isLoading: Bool = false
+
     // 🔸 追加：評価件数キャッシュ（dogFoodID -> count）
     @Published private(set) var evaluationCounts: [String: Int] = [:]
     // 重複ロード防止
     private var loadingCountIDs: Set<String> = []
+    
+    func resetEvaluationCountCache(only ids: [String]) {
+        for id in ids {
+            evaluationCounts.removeValue(forKey: id)
+            loadingCountIDs.remove(id) // ← これは “そのIDだけ” ならOK
+        }
+    }
     
     private var useMockData: Bool
     private var favoritesListener: ListenerRegistration?
     private var authStateHandle: AuthStateDidChangeListenerHandle?
     
     init(mockData: Bool = false) {
+        // Previewsでは必ずモック（Firestore/Auth/Networkを触らない）
+        if Self.isPreview {
+            self.useMockData = true
+            loadMockDogFoods()
+            return
+        }
+
         self.useMockData = mockData
         if mockData {
             loadMockDogFoods()
         } else {
             fetchDogFoods()
-            
+
             // 🔸 ログイン状態を監視して購読の開始/停止を自動化
             authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
-                guard let self else { return }
-                self.stopFavoritesListener()
-                self.favoriteDogFoodIDs = []
-                if let uid = user?.uid {
-                    self.startFavoritesListener(for: uid)
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.stopFavoritesListener()
+                    self.favoriteDogFoodIDs = []
+                    if let uid = user?.uid {
+                        self.startFavoritesListener(for: uid)
+                    }
                 }
             }
         }
@@ -57,21 +135,32 @@ class DogFoodViewModel: ObservableObject {
     // MARK: - モックデータ
     private func loadMockDogFoods() {
         self.dogFoods = PreviewMockData.dogFood
+        self.favoriteDogFoodIDs = Set(PreviewMockData.favoriteIds(for: "user_001"))
+        // プレビューでも createdAt 順を再現するためモックの登録日時を設定
+        var mockCreatedAts: [String: Date] = [:]
+        for fav in PreviewMockData.favorites where fav.userId == "user_001" {
+            mockCreatedAts[fav.dogFoodId] = fav.createdAt
+        }
+        self.favoriteCreatedAts = mockCreatedAts
     }
     
     // MARK: - ドッグフード一覧取得
     func fetchDogFoods() {
+        guard !Self.isPreview else { return }
+        isLoading = true
         let db = Firestore.firestore()
-        
+
         db.collection("dogfood").getDocuments(source: .default) { snapshot, error in
             if let error = error {
                 print("Firestore読み込みエラー: \(error.localizedDescription)")
+                Task { @MainActor in self.isLoading = false }
                 return
             }
             
             guard let documents = snapshot?.documents else { return }
             
-            // どの項目が足りない/型が違うかを詳細ログ
+            #if DEBUG
+            // Debugビルドのみ：どの項目が足りない/型が違うかを詳細ログ
             for doc in documents {
                 let d = doc.data()
                 var issues: [String] = []
@@ -85,6 +174,7 @@ class DogFoodViewModel: ObservableObject {
                     print("⚠️ \(doc.documentID) 欠落/型不一致 → \(issues)")
                 }
             }
+            #endif
             
             let fetchedDogFoods: [DogFood] = documents.compactMap { doc -> DogFood? in
                 let data = doc.data()
@@ -99,17 +189,50 @@ class DogFoodViewModel: ObservableObject {
                     print("⚠️ データが不完全なためスキップ (ID: \(doc.documentID))")
                     return nil
                 }
+                let storagePath = data["storagePath"] as? String
                 let brand = data["brand"] as? String
                 let homepageURL = data["homepageURL"] as? String
                 let amazonURL = data["amazonURL"] as? String
                 let yahooURL = data["yahooURL"] as? String
                 let rakutenURL = data["rakutenURL"] as? String
-                
+
+                // --- New fields (foodType & nutrients) ---
+                let foodType = (data["foodType"] as? String).flatMap { DogFoodType(rawValue: $0) }
+
+                func readDouble(_ key: String) -> Double? {
+                    if let d = data[key] as? Double { return d }
+                    if let i = data[key] as? Int { return Double(i) }
+                    if let s = data[key] as? String {
+                        // "23%" / "23.0" / "370kcal" などを許容
+                        let cleaned = s
+                            .replacingOccurrences(of: "%", with: "")
+                            .replacingOccurrences(of: "kcal", with: "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        return Double(cleaned)
+                    }
+                    return nil
+                }
+
+                let protein = readDouble("protein")
+                let fat = readDouble("fat")
+                let fiber = readDouble("fiber")
+                let ash = readDouble("ash")
+                let moisture = readDouble("moisture")
+                let calories = readDouble("calories")
+
                 return DogFood(
                     id: doc.documentID,
                     name: name,
                     brand: brand,
                     imagePath: imagePath,
+                    storagePath: storagePath,
+                    foodType: foodType,
+                    protein: protein,
+                    fat: fat,
+                    fiber: fiber,
+                    ash: ash,
+                    moisture: moisture,
+                    calories: calories,
                     description: description,
                     summary: summary,
                     keywords: keywords,
@@ -131,14 +254,16 @@ class DogFoodViewModel: ObservableObject {
                 )
             }
             
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.dogFoods = fetchedDogFoods
+                self.isLoading = false
             }
         }
     }
     
     // MARK: - お気に入り（リアルタイム購読）
     func startFavoritesListener(for userID: String) {
+        guard !Self.isPreview else { return }
         let db = Firestore.firestore()
         favoritesListener?.remove()
         
@@ -151,9 +276,17 @@ class DogFoodViewModel: ObservableObject {
                     print("❌ お気に入り購読エラー:", error.localizedDescription)
                     return
                 }
-                let ids = snapshot?.documents.map { $0.documentID } ?? []
-                DispatchQueue.main.async {
-                    self.favoriteDogFoodIDs = Set(ids)
+                let docs = snapshot?.documents ?? []
+                let ids = Set(docs.map { $0.documentID })
+                // createdAt を取得してソートに使う（フィールドがない場合は epoch を使用）
+                var createdAts: [String: Date] = [:]
+                for doc in docs {
+                    createdAts[doc.documentID] = (doc.data()["createdAt"] as? Timestamp)?.dateValue()
+                        ?? Date(timeIntervalSince1970: 0)
+                }
+                Task { @MainActor in
+                    self.favoriteDogFoodIDs = ids
+                    self.favoriteCreatedAts = createdAts
                 }
             }
     }
@@ -170,6 +303,7 @@ class DogFoodViewModel: ObservableObject {
     }
     
     func toggleFavorite(dogFoodID: String) {
+        guard !Self.isPreview else { return }
         guard let uid = Auth.auth().currentUser?.uid else {
             print("❌ 未ログイン：toggleFavoriteは無視")
             return
@@ -190,6 +324,27 @@ class DogFoodViewModel: ObservableObject {
         }
     }
     
+    
+    // MARK: - 検索タブ用リセット
+    func resetSearchState() {
+        resetSearchUIStateKeepingFilters()
+        includeIngredientFilters.removeAll()
+        selectedIngredientFilters.removeAll()
+        // selectedDogFoodはresetSearchUIStateKeepingFilters()でクリアされるのでここで再度クリア不要
+    }
+    
+    /// 検索UIを初期状態（未入力・ブランド一覧表示）に戻す。
+    /// ただし成分フィルター（include / exclude）は維持する。
+    func resetSearchUIStateKeepingFilters() {
+        searchText = ""
+        isSearchActive = false
+        showAllFoodsFromBrandExplorer = false
+        selectedDogFood = nil
+
+        // ✅ フィルタは維持する（ここでは触らない）
+        // includeIngredientFilters / selectedIngredientFilters はそのまま
+    }
+    
     /// キャッシュされた評価件数を返す（未取得なら nil）
        func evaluationCount(for id: String?) -> Int? {
            guard let id else { return nil }
@@ -198,6 +353,7 @@ class DogFoodViewModel: ObservableObject {
     
     /// 未取得なら評価件数を取得してキャッシュに反映
         func loadEvaluationCountIfNeeded(for id: String?) {
+            guard !Self.isPreview else { return }
             guard let id, !id.isEmpty else { return }
             // すでに持っている or ロード中ならスキップ
             if evaluationCounts[id] != nil || loadingCountIDs.contains(id) { return }
@@ -211,7 +367,7 @@ class DogFoodViewModel: ObservableObject {
                 guard let self else { return }
                 if let snap, err == nil {
                     let n = Int(truncating: snap.count) // Int64 -> Int
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         self.evaluationCounts[id] = n
                         self.loadingCountIDs.remove(id)
                     }
@@ -220,7 +376,7 @@ class DogFoodViewModel: ObservableObject {
                     query.getDocuments { [weak self] s, e in
                         guard let self else { return }
                         let n = s?.documents.count ?? 0
-                        DispatchQueue.main.async {
+                        Task { @MainActor in
                             self.evaluationCounts[id] = n
                             self.loadingCountIDs.remove(id)
                         }
@@ -235,6 +391,26 @@ class DogFoodViewModel: ObservableObject {
             for id in ids { loadEvaluationCountIfNeeded(for: id) }
         }
     
+    private func matchesFoodType(_ food: DogFood) -> Bool {
+        switch foodTypeFilter {
+        case .all: return true
+        case .dry: return food.foodType == .dry
+        case .wet: return food.foodType == .wet
+        }
+    }
+
+    private func matchesNumeric(_ value: Double?, filter: NumericFilter) -> Bool {
+        // 未適用なら常にOK
+        guard filter.isEnabled else { return true }
+
+        // 値が無いものは除外（範囲を指定しているのに値が無い場合）
+        guard let v = value else { return false }
+
+        if let minV = filter.minValue, v < minV { return false }
+        if let maxV = filter.maxValue, v > maxV { return false }
+        return true
+    }
+    
     // MARK: - 検索用
     var filteredDogFoods: [DogFood] {
         let text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -242,31 +418,58 @@ class DogFoodViewModel: ObservableObject {
 
         return dogFoods.filter { food in
             // ① テキストマッチ
+            // 複数ワード入力（例："ブランド名 フード名"）にも対応。
+            // 入力を空白で分割し、各トークンが「名前 or ブランド」のどちらかに含まれていれば一致とする（AND条件）。
             let matchesText: Bool
             if lower.isEmpty {
                 matchesText = true
             } else {
                 let name = food.name.lowercased()
                 let brand = food.brand?.lowercased() ?? ""
-                matchesText = name.contains(lower) || brand.contains(lower)
+                let tokens = lower
+                    .split(whereSeparator: { $0.isWhitespace })
+                    .map { String($0) }
+                    .filter { !$0.isEmpty }
+
+                // 1ワードなら従来通り（OR）
+                if tokens.count <= 1, let t = tokens.first {
+                    matchesText = name.contains(t) || brand.contains(t)
+                } else {
+                    // 複数ワードは AND（各トークンが name/brand のどちらかに入っている）
+                    matchesText = tokens.allSatisfy { token in
+                        name.contains(token) || brand.contains(token)
+                    }
+                }
             }
 
             // ② 成分フィルタ
-            // selectedIngredientFilters は「除外したい成分」の集合として扱う
-            let forbidden = selectedIngredientFilters
-            let matchesIngredients: Bool
-            if forbidden.isEmpty {
-                // 何も除外していない → 成分では絞り込まない
-                matchesIngredients = true
-            } else {
-                // 除外指定された成分を一つでも含むフードは表示しない
-                let hasForbidden = forbidden.contains { filter in
-                    food.contains(filter)
-                }
-                matchesIngredients = !hasForbidden
+            // - includeIngredientFilters: 「含む」(AND条件: すべて含む)
+            // - selectedIngredientFilters: 「含まない」(除外: どれも含まない)
+            let include = includeIngredientFilters
+            let exclude = selectedIngredientFilters
+
+            // 「含む」：include に入っている成分はすべて含んでいる必要がある
+            let includeOK = include.allSatisfy { filter in
+                food.contains(filter)
             }
 
-            return matchesText && matchesIngredients
+            // 「含まない」：exclude に入っている成分は1つも含んではいけない
+            let excludeOK = exclude.allSatisfy { filter in
+                !food.contains(filter)
+            }
+
+            let matchesIngredients = includeOK && excludeOK
+
+            let matchesNewFilters =
+                matchesFoodType(food)
+                && matchesNumeric(food.calories, filter: caloriesFilter)
+                && matchesNumeric(food.protein, filter: proteinFilter)
+                && matchesNumeric(food.fat, filter: fatFilter)
+                && matchesNumeric(food.fiber, filter: fiberFilter)
+                && matchesNumeric(food.ash, filter: ashFilter)
+                && matchesNumeric(food.moisture, filter: moistureFilter)
+
+            return matchesText && matchesIngredients && matchesNewFilters
         }
     }
     
@@ -293,79 +496,21 @@ class DogFoodViewModel: ObservableObject {
         self.searchText = brand
         self.isSearchActive = true
     }
-    
-    // MARK: - Favorites タブ用（これを使えば専用VMなしでOK）
-    var favoriteDogFoods: [DogFood] {
-        dogFoods.filter { favoriteDogFoodIDs.contains($0.id ?? "") }
-    }
-    
-    // MARK: - お気に入り取得
-    func fetchFavorites(for userID: String) {
-        let db = Firestore.firestore()
-        db.collection("users").document(userID).collection("favorites").getDocuments { snapshot, error in
-            if let error = error {
-                print("お気に入り取得エラー: \(error.localizedDescription)")
-                return
-            }
-            
-            guard let documents = snapshot?.documents else { return }
-            self.favoriteDogFoodIDs = Set(documents.map { $0.documentID })
-        }
-    }
-    
-    // MARK: - お気に入り追加・削除
-    func toggleFavorite(dogFoodID: String, userID: String) {
-        let db = Firestore.firestore()
-        let ref = db.collection("users").document(userID).collection("favorites").document(dogFoodID)
-        
-        if favoriteDogFoodIDs.contains(dogFoodID) {
-            // 削除
-            ref.delete { error in
-                if error == nil {
-                    DispatchQueue.main.async {
-                        self.favoriteDogFoodIDs.remove(dogFoodID)
-                    }
-                } else {
-                    print("お気に入り削除エラー: \(error!.localizedDescription)")
-                }
-            }
-        } else {
-            // 追加
-            ref.setData(["createdAt": Timestamp()]) { error in
-                if error == nil {
-                    DispatchQueue.main.async {
-                        self.favoriteDogFoodIDs.insert(dogFoodID)
-                    }
-                } else {
-                    print("お気に入り追加エラー: \(error!.localizedDescription)")
-                }
-            }
-        }
-    }
-    
-    
-}
 
-func saveEvaluation(_ evaluation: Evaluation, completion: @escaping (Bool) -> Void) {
-    let db = Firestore.firestore()
-    
-    do {
-        if let id = evaluation.id {
-            // 既存IDがある場合は更新（または上書き保存）
-            try db.collection("evaluations")
-                .document(id)
-                .setData(from: evaluation) { error in
-                    completion(error == nil)
-                }
-        } else {
-            // IDが未割当なら新規ドキュメントを自動生成
-            _ = try db.collection("evaluations")
-                .addDocument(from: evaluation) { error in
-                    completion(error == nil)
-                }
-        }
-    } catch {
-        print("Error saving evaluation: \(error)")
-        completion(false)
+    /// 外部画面からドッグフード詳細を開きたいときに呼ぶ
+    func openDogFoodDetail(_ dogFood: DogFood) {
+        selectedDogFood = dogFood
     }
+    
+    // MARK: - Favorites タブ用
+    var favoriteDogFoods: [DogFood] {
+        dogFoods
+            .filter { favoriteDogFoodIDs.contains($0.id ?? "") }
+            .sorted { a, b in
+                let dateA = favoriteCreatedAts[a.id ?? ""] ?? .distantPast
+                let dateB = favoriteCreatedAts[b.id ?? ""] ?? .distantPast
+                return dateA > dateB  // 新しく追加した順（降順）
+            }
+    }
+    
 }

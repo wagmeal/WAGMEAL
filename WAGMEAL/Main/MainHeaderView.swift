@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MainHeaderView: View {
+    @EnvironmentObject var authVM: AuthViewModel
     @State private var isShowingSettings = false
 
     var body: some View {
@@ -15,6 +16,17 @@ struct MainHeaderView: View {
                     .font(.system(size: 36, weight: .light))
                     .kerning(4)
                     .foregroundColor(.white)
+
+                // 左上：ゲスト表示（ログアウト時のみ）
+                HStack {
+                    if !authVM.isLoggedIn {
+                        Text("ゲスト")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
 
                 // 右上の歯車ボタン
                 HStack {
@@ -39,8 +51,12 @@ struct MainHeaderView: View {
 }
 
 #Preview {
-    VStack(spacing: 0) {
+    let mockAuth = AuthViewModel()
+    mockAuth.isLoggedIn = false
+
+    return VStack(spacing: 0) {
         MainHeaderView()
-        Spacer() // 背景とのバランス用
+            .environmentObject(mockAuth)
+        Spacer()
     }
 }
